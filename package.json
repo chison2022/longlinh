@@ -1,0 +1,51 @@
+{
+  "name": "longlinh",
+  "version": "1.0.0",
+  "description": "Bot Discord quản lý bang hội Nghịch Thủy Hàn: bang chiến, danh sách thành viên, sự kiện, hòm thư, Google Sheet",
+  "main": "app.js",
+  "scripts": {
+    "start": "node app.js",
+    "dev": "node --watch app.js",
+    "deploy": "node src/bot/deployCommands.js",
+    "test": "node --test \"test/**/*.test.js\"",
+    "roster:import": "node scripts/import-game-roster.js",
+    "roster:video": "node scripts/roster-video.js",
+    "attendance:import": "node scripts/import-attendance.js",
+    "logs:report": "node scripts/log-report.js",
+    "mail:keygen": "node scripts/mailbox-keygen.js",
+    "mail:who": "node scripts/mailbox-who.js",
+    "package": "node packaging/build.js"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "@napi-rs/canvas": "^1.0.10",
+    "discord.js": "^14.27.0",
+    "dotenv": "^18.0.5",
+    "exceljs": "^4.4.0",
+    "express": "^5.2.1",
+    "jszip": "3.10.2",
+    "node-cron": "^4.6.0",
+    "pg": "^8.13.1"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.2.17",
+    "@yao-pkg/pkg": "^6.23.0"
+  },
+  "bin": "app.js",
+  "pkg": {
+    "scripts": [
+      "src/**/*.js",
+      "config/**/*.js"
+    ],
+    "assets": [
+      "assets/fonts/*",
+      "db/schema.sql",
+      "config/mailbox-public.pem",
+      "node_modules/@napi-rs/canvas-win32-x64-msvc/*"
+    ],
+    "targets": [
+      "node24-win-x64"
+    ],
+    "outputPath": "dist"
+  }
+}

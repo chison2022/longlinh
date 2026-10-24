@@ -1,0 +1,31 @@
+<!--
+  Windows Sandbox config for testing the LongLinh installer (never touches the host: networking is off, the folder is read-only).
+  Open this file (double-click) with "Windows Sandbox" enabled. The HostFolder below is a placeholder; the build script (option wsb, see packaging build.js) writes the real file LongLinh-test.wsb into the output dir.
+  Do NOT open this template directly.
+  Inside the sandbox: C:\LLTest has LongLinh-Setup.exe + INSTALLER-PASSWORD.txt (build.js writes it into the out dir unless INSTALLER_PASSWORD
+  was given), built with a DUMMY .env (no Discord token, no real DB):  node packaging/build.js with options env, out and wsb (see build.js).
+  build.js refuses wsb when env is the repo .env.
+  Accounts: WDAGUtilityAccount = the sandbox administrator (run the installer as this one).
+            tuser = standard (non-admin) user created at logon, FIXED THROWAWAY PASSWORD:  Tuser-Throwaway-2026  (only exists in the
+            disposable sandbox). Use it with:  runas /user:tuser cmd   or  Start-Process -Credential.
+  Steps: see CHECKLIST.md in this folder.
+-->
+<Configuration>
+  <VGpu>Disable</VGpu>
+  <Networking>Disable</Networking>
+  <ClipboardRedirection>Disable</ClipboardRedirection>
+  <PrinterRedirection>Disable</PrinterRedirection>
+  <AudioInput>Disable</AudioInput>
+  <VideoInput>Disable</VideoInput>
+  <ProtectedClient>Enable</ProtectedClient>
+  <MappedFolders>
+    <MappedFolder>
+      <HostFolder>@@HOST_FOLDER@@</HostFolder>
+      <SandboxFolder>C:\LLTest</SandboxFolder>
+      <ReadOnly>true</ReadOnly>
+    </MappedFolder>
+  </MappedFolders>
+  <LogonCommand>
+    <Command>cmd.exe /c net user tuser Tuser-Throwaway-2026 /add</Command>
+  </LogonCommand>
+</Configuration>

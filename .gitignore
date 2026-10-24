@@ -1,0 +1,16 @@
+node_modules/
+.env
+dist/
+dist/INSTALLER-PASSWORD.txt
+google-key.json
+logs/
+*private*.pem
+LongLinh-mailbox-private.pem
+
+# local only: real servers, members and setup (screenshots, test roster, ops notes), assistant files, the DB's CA cert
+.claude/
+docs/shots/
+docs/test-data/
+docs/LUONG-BOT.md
+certs/
+tmp-upload/

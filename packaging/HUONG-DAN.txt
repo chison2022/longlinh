@@ -1,0 +1,35 @@
+HƯỚNG DẪN CÀI BOT LONG LINH (5 bước)
+
+LƯU Ý QUAN TRỌNG: chỉ được chạy bot trên MỘT máy tại một thời điểm.
+Nếu bot đang chạy ở máy khác, hãy tắt máy đó trước khi cài máy này (hai bot cùng chạy sẽ trả lời trùng lặp).
+
+1. Nhận file LongLinh-Setup.exe (USB hoặc chép trực tiếp từ máy người quản trị) và bấm đúp để chạy.
+   Mật khẩu cài đặt do người quản trị đưa RIÊNG, bằng kênh KHÁC với file (ví dụ gọi điện hoặc nói trực tiếp).
+   Không gửi file và mật khẩu cùng một kênh, và không gửi qua ứng dụng chat, mạng xã hội hay email. Nhập mật khẩu khi bộ cài hỏi.
+   Nếu Windows báo "Windows protected your PC" (SmartScreen): bấm "More info" -> "Run anyway".
+   Nếu hỏi quyền quản trị (UAC): bấm "Yes".
+
+2. Bấm Next -> (để nguyên ô "Giữ máy không ngủ") -> Next -> Install -> Finish.
+   Bot tự khởi động ngay và tự chạy lại mỗi khi bật máy, kể cả khi chưa đăng nhập Windows.
+
+3. Chờ khoảng 1-2 phút, mở Start -> "Long Linh – Trạng thái".
+   Thấy chữ "BOT DANG CHAY TOT" màu xanh là xong. Nếu vàng, chờ thêm 2 phút rồi mở lại.
+
+4. Để laptop CẮM SẠC và bật Wi-Fi/mạng thường xuyên. Có thể đóng nắp (máy vẫn chạy) nhưng đừng tắt nguồn.
+   Không cần mở gì thêm, không cần đăng nhập.
+
+5. Khi cần: Start -> "Long Linh – Khởi động lại" để khởi động lại bot.
+   Cập nhật phiên bản mới: chạy file LongLinh-Setup.exe mới (cài đè lên, log được giữ lại).
+   Gỡ cài đặt: Settings -> Apps -> Long Linh Bot -> Uninstall (bộ gỡ sẽ hỏi có xoá luôn thư mục log không).
+
+Bot cài ở C:\Program Files\LongLinh và chạy bằng tài khoản dịch vụ LocalService (không phải quản trị viên).
+Log nằm ở C:\ProgramData\LongLinh\logs (mọi người dùng đọc được, chỉ quản trị sửa được). Nếu có sự cố, gửi file
+C:\ProgramData\LongLinh\logs\longlinh.log cho người quản trị.
+
+BẢO MẬT: file LongLinh-Setup.exe chứa mật khẩu/token của bot (đã mã hoá bằng mật khẩu cài đặt, nhưng vẫn là dữ liệu nhạy cảm):
+đừng gửi cho người lạ, đừng để trên thư mục chia sẻ, xoá khỏi USB sau khi cài xong. File cấu hình .env trong thư mục cài đặt
+chỉ quản trị viên đọc được.
+
+GOOGLE SHEET (tuỳ chọn): file khoá service account google-key.json (đặt cạnh LongLinh.exe, hoặc đặt biến GOOGLE_KEY_FILE trong .env) là khoá bí mật như .env.
+Bộ cài tự khoá quyền file này. Nếu tự chép khoá vào thư mục cài đặt, hãy khoá quyền file (chỉ Administrators/SYSTEM/LocalService) như .env,
+đừng để người dùng thường đọc được. Sau đó chia sẻ Google Sheet cho email trong khoá với quyền Editor.
