@@ -10,7 +10,7 @@ const { memberInfo, isStranger } = require('../../services/rosterService');
 const { formatLocalDateTime, discordTs } = require('../../utils/time');
 const { stylesOf, styleOf, lineupStyles } = require('../classStyle');
 const { ensureMembers, MEMBERS_WARNING } = require('../memberCache');
-const { buildGameUploadModal, buildGameAddModal } = require('../ui/settingsModal');
+const { buildGameUploadModal, buildGameAddModal, buildGameUidModal } = require('../ui/settingsModal');
 const { invalidateGameNames } = require('../gameNames');
 const { schedulePanelRefresh } = require('../refresher');
 const { scheduleSync } = require('../sheetSync');
@@ -44,14 +44,17 @@ function setImageLoader(loader) {
   rosterImage = undefined;
 }
 
-const buttons = () =>
+// Two rows (a row holds 5 buttons at most).
+const buttons = () => [
   new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId('adm:gamexlsx').setLabel('📥 Tải Excel').setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId('adm:gmap').setLabel('🔗 Ghép tên').setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId('adm:gren').setLabel('✏️ Đổi tên').setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId('adm:gameadd').setLabel('➕ Thêm tên game').setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId('adm:gameup').setLabel('📤 Cập nhật danh sách').setStyle(ButtonStyle.Primary)
-  );
+  ),
+  new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('adm:gameuid').setLabel('🆔 ID game').setStyle(ButtonStyle.Secondary)),
+];
 
 const esc = (s) => escapeMarkdown(String(s));
 // Up to `max` items joined with ", " and a "… +k" tail; the whole text is cut to `limit` chars (embed field cap).
@@ -180,13 +183,13 @@ async function buildView(interaction, config, note) {
   const data = await load(interaction, config);
   if (!data) {
     logEvent('roster', 'view', { ...ixCtx(interaction), hasRoster: false });
-    return { content: [note, NO_ROSTER].filter(Boolean).join('\n'), components: [buttons()] };
+    return { content: [note, NO_ROSTER].filter(Boolean).join('\n'), components: buttons() };
   }
   const styles = stylesOf(interaction.guild, config);
   const files = await pngFiles(data, config, styles, interaction.guild);
   logEvent('roster', 'view', { ...ixCtx(interaction), hasRoster: true, members: data.members.length, matched: data.match.matched.length, complete: data.complete, image: files ? 'png' : 'text' });
   const content = [note, data.complete ? null : MEMBERS_WARNING, files ? null : textFallback(data.members)].filter(Boolean).join('\n');
-  return { content: content || undefined, embeds: [buildEmbed(data, config, styles)], files: files || [], components: [buttons()], allowedMentions: { parse: [] } };
+  return { content: content || undefined, embeds: [buildEmbed(data, config, styles)], files: files || [], components: buttons(), allowedMentions: { parse: [] } };
 }
 
 // adm:game
@@ -203,7 +206,7 @@ async function onBack(interaction, config) {
 // adm:gamexlsx
 async function onXlsx(interaction, config) {
   const data = await load(interaction, config);
-  if (!data) return interaction.editReply({ content: NO_ROSTER, components: [buttons()] });
+  if (!data) return interaction.editReply({ content: NO_ROSTER, components: buttons() });
   const styles = stylesOf(interaction.guild, config);
   const xlsx = await buildGameRosterXlsx(data.members, { classes: config.classes, styles: lineupStyles(styles) });
   const day = formatLocalDateTime(new Date(data.roster.importedAt)).split(' ')[0].replace('/', '-');
@@ -314,4 +317,21 @@ async function onAddSubmit(interaction, config) {
   return interaction.editReply(await buildView(interaction, config, `✅ Đã thêm **${esc(r.member.name)}** (${esc(r.member.className)} · ${esc(r.member.rank)}) vào danh sách game. Người này chọn được tên ở bảng 🎮 và ở cổng vào ngay; lần cập nhật danh sách sau sẽ thay bằng dữ liệu thật.`));
 }
 
-module.exports = { onView, onBack, onXlsx, onUpload, onUploadSubmit, onAdd, onAddSubmit, setImageLoader, MAX_FILE_BYTES, buildEmbedForTest: buildEmbed };
+// adm:gameuid (opens the form) / adm:gameuidModal: a manager sets or removes the in-game ID of a character (see gameRosterService.setGameUid).
+function onUid(interaction) {
+  return interaction.showModal(buildGameUidModal());
+}
+
+async function onUidSubmit(interaction, config) {
+  const name = interaction.fields.getTextInputValue('name');
+  const r = await gameRoster.setGameUid(interaction.guildId, name, interaction.fields.getTextInputValue('uid'));
+  if (r.error) {
+    logEvent('roster', 'game_uid', { ...ixCtx(interaction), ok: false, reason: r.error.slice(0, 60) });
+    return interaction.editReply(`❌ ${r.error}`);
+  }
+  logEvent('roster', 'game_uid', { ...ixCtx(interaction), ok: true, cleared: !r.uid });
+  scheduleSync(interaction.client, interaction.guildId); // the ThanhVien tab shows the ID
+  return interaction.editReply(await buildView(interaction, config, r.uid ? `✅ Đã lưu ID game **${r.uid}** cho **${esc(r.name)}**.` : `✅ Đã xoá ID game của **${esc(r.name)}**.`));
+}
+
+module.exports = { onUid, onUidSubmit, onView, onBack, onXlsx, onUpload, onUploadSubmit, onAdd, onAddSubmit, setImageLoader, MAX_FILE_BYTES, buildEmbedForTest: buildEmbed };

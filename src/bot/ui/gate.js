@@ -1,7 +1,7 @@
 // New-member gate views (pure: no Discord client, no DB). customIds (prefix gate, stateless):
 //  public panel : gate:member
 //  member steps : gate:pick:<page>:<ver> (select) | gate:p:<page>:<ver> (◀ ▶) | gate:free (modal gate:freeModal) | gate:cls:<token> (class select)
-//                 | gate:send:<token>:<classIndex> | gate:back
+//                 | gate:send:<token>:<classIndex> (opens the ID modal gate:sendModal:<token>:<classIndex>, the real send) | gate:back
 //  approval card: gate:ok:<id> | gate:no:<id> (modal gate:noModal:<id>)      (admin-gated)
 //  auto-approved card (a roster name): gate:rv:<id> (modal gate:rvModal:<id>) = take the membership back      (admin-gated)
 // <token> = the chosen character: `r<position in the roster>-<roster version>` or `f-<typed name>`.
@@ -113,18 +113,32 @@ function buildClassStep({ token, name, free, classes, styles, noEmoji = false, n
 // Step 3: summary + send.
 // fromRoster: the class came from the game roster (step 2 skipped) -> a note + a "change class" button back to step 2.
 // instant: sending gets the member in right away (a roster name with the auto-approval on).
-function buildSummary({ token, classIndex, name, free, className, styles, fromRoster = false, instant = false }) {
+function buildSummary({ token, classIndex, name, free, className, styles, fromRoster = false, instant = false, note = null }) {
   const st = styleOf(styles, className);
   const lines = [
     '**🚪 Xin vào bang (3/3): kiểm tra rồi gửi**',
     `🎮 Nhân vật: **${safe(name, 40)}**${free ? ' (tự nhập, quản lý sẽ kiểm tra)' : ''}`,
     `🧙 Phái: ${st.emojiText} ${safe(plainClass(className) || className, 40)}${fromRoster ? ' (theo danh sách game; sai thì bấm Đổi phái)' : ''}`,
-    instant ? 'Bấm Gửi yêu cầu là vào bang ngay (tên có trong danh sách game).' : 'Quản lý sẽ duyệt; bạn nhận tin nhắn riêng khi được vào.',
+    instant ? 'Bấm Gửi yêu cầu, nhập ID nhân vật trong game là vào bang ngay (tên có trong danh sách game).' : 'Bấm Gửi yêu cầu và nhập ID nhân vật trong game. Quản lý sẽ duyệt; bạn nhận tin nhắn riêng khi được vào.',
   ];
+  if (note) lines.push(note);
   const buttons = [button(`gate:send:${token}:${classIndex}`, LABELS.send, ButtonStyle.Success)];
   if (fromRoster) buttons.push(button(`gate:chc:${token}`, LABELS.changeClass));
   buttons.push(button('gate:back', LABELS.back));
   return ephemeral(lines.join('\n'), [new ActionRowBuilder().addComponents(...buttons)]);
+}
+
+// The send button's form: the in-game ID (required). Longest customId: gate:sendModal:f-<32 chars>:<2 digits> = 52 chars.
+function sendModal(token, classIndex) {
+  return new ModalBuilder()
+    .setCustomId(`gate:sendModal:${token}:${classIndex}`)
+    .setTitle('Gửi yêu cầu vào bang')
+    .addLabelComponents(
+      new LabelBuilder()
+        .setLabel('ID nhân vật trong game')
+        .setDescription('Chỉ chữ số, 5 đến 20 số (xem trong game, mục thông tin nhân vật).')
+        .setTextInputComponent(new TextInputBuilder().setCustomId('uid').setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(20))
+    );
 }
 
 // The member already has a pending request (a second click): its status.
@@ -166,7 +180,7 @@ function approvalTexts({ request, member, entry = null, classText, warnings = []
   } else {
     game.push('⚠️ không có trong danh sách game mới nhất');
   }
-  const main = ['### 🚪 Yêu cầu vào bang', `<@${request.discordId}> (${who.join(', ')})`, game.join(' · '), `🧙 Phái: ${classText}`].join('\n');
+  const main = ['### 🚪 Yêu cầu vào bang', `<@${request.discordId}> (${who.join(', ')})`, game.join(' · '), `🧙 Phái: ${classText}`, ...(request.gameUid ? [`🆔 ID game: ${request.gameUid}`] : [])].join('\n');
   const out = [main];
   if (warnings.length) out.push(warnings.join('\n'));
   return out;
@@ -249,6 +263,7 @@ module.exports = {
   freeNameModal,
   buildClassStep,
   buildSummary,
+  sendModal,
   buildPendingNotice,
   approvalTexts,
   buildApprovalCard,

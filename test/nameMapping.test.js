@@ -281,7 +281,7 @@ describe('🔗 Ghép tên (adm:gmap*)', () => {
     const back = lastReply(log);
     assert.equal(back.content, '');
     assert.ok(back.embeds && back.embeds.length, 'the 🎮 summary embed');
-    assert.deepEqual(ids(back), ['adm:gamexlsx', 'adm:gmap', 'adm:gren', 'adm:gameadd', 'adm:gameup']);
+    assert.deepEqual(ids(back), ['adm:gamexlsx', 'adm:gmap', 'adm:gren', 'adm:gameadd', 'adm:gameup', 'adm:gameuid']);
   });
   it('a bot, a stranger or a stale index is not saved', async () => {
     const bot = lastReply(await press(['adm', 'gmapu', '2', 'r'], { values: [sid(3)] }));

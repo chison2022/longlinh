@@ -260,6 +260,19 @@ describe('panel and upload modal', () => {
   });
 });
 
+describe('buildGameRosterXlsx: ID game', () => {
+  it('adds an "ID game" text column (leading zeros and 20 digits survive); empty when the character has none', async () => {
+    const buf = await buildGameRosterXlsx([m('A', { gameUid: '00123456789012345678' }), m('B')], { classes: CLASSES });
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load(buf);
+    const ws = wb.getWorksheet('Thành viên');
+    assert.equal(ws.getRow(1).getCell(8).value, 'ID game');
+    assert.strictEqual(ws.getRow(2).getCell(8).value, '00123456789012345678');
+    assert.ok(!ws.getRow(3).getCell(8).value);
+    assert.equal((await gameRoster.parseRosterXlsx(buf, CLASSES)).length, 2, 'still importable');
+  });
+});
+
 describe('adm:game handlers', () => {
   const GUILD = '800000000000000001';
   const MANAGE = new PermissionsBitField(PermissionFlagsBits.ManageGuild);
@@ -466,6 +479,53 @@ describe('adm:game handlers', () => {
       await adminHandler.handle(i, ['adm', 'gameaddModal']);
       assert.match(String(reply(log).content || reply(log)), /❌ Tên \*\*Kelo\*\* đã có/);
       assert.equal(panelRefreshed.length, 0);
+    });
+  });
+
+  describe('🆔 adm:gameuid / adm:gameuidModal', () => {
+    it('a second row of buttons carries 🆔 ID game; the first row is unchanged', async () => {
+      const { i, log } = interaction();
+      await adminHandler.handle(i, ['adm', 'game']);
+      const rows = reply(log).components.map((r) => r.toJSON().components.map((c) => c.custom_id));
+      assert.deepEqual(rows, [['adm:gamexlsx', 'adm:gmap', 'adm:gren', 'adm:gameadd', 'adm:gameup'], ['adm:gameuid']]);
+    });
+    it('opens a form: name (required) + ID (optional, 20 max); admin-only', async () => {
+      const { i, log } = interaction();
+      await adminHandler.handle(i, ['adm', 'gameuid']);
+      const modal = log.find((l) => l[0] === 'showModal')[1].toJSON();
+      assert.equal(modal.custom_id, 'adm:gameuidModal');
+      const [name, uid] = modal.components.map((c) => c.component);
+      assert.deepEqual([name.custom_id, name.required !== false, uid.custom_id, uid.required, uid.max_length], ['name', true, 'uid', false, 20]);
+      const denied = interaction({ member: { roles: [], permissions: NOBODY }, memberPermissions: NOBODY });
+      await adminHandler.handle(denied.i, ['adm', 'gameuid']);
+      assert.equal(denied.log[0][0], 'reply');
+    });
+    it('sets the ID, re-draws the summary and refreshes the sheet; an empty ID removes it', async () => {
+      const calls = [];
+      mock.method(gameRoster, 'setGameUid', async (g, name, uid) => (calls.push([g, name, uid]), { name: 'Kelo', uid: uid || null }));
+      let fields = { name: ' kelo ', uid: '12345678' };
+      const get = { getTextInputValue: (k) => fields[k] };
+      const set = interaction({ fields: get });
+      await adminHandler.handle(set.i, ['adm', 'gameuidModal']);
+      assert.match(reply(set.log).content, /Đã lưu ID game \*\*12345678\*\* cho \*\*Kelo\*\*/);
+      fields = { name: 'Kelo', uid: '' };
+      const clear = interaction({ fields: get });
+      await adminHandler.handle(clear.i, ['adm', 'gameuidModal']);
+      assert.match(reply(clear.log).content, /Đã xoá ID game của \*\*Kelo\*\*/);
+      assert.deepEqual(calls, [[GUILD, ' kelo ', '12345678'], [GUILD, 'Kelo', '']]);
+    });
+    it('a refusal (unknown name, bad format, taken) is shown as ❌ and nothing else happens', async () => {
+      mock.method(gameRoster, 'setGameUid', async () => ({ error: 'ID này thuộc nhân vật **X** (đã rời bang) — có thể là cùng người đổi tên: dùng ✏️ Đổi tên.' }));
+      const { i, log } = interaction({ fields: { getTextInputValue: () => 'x' } });
+      await adminHandler.handle(i, ['adm', 'gameuidModal']);
+      assert.match(String(reply(log)), /❌ ID này thuộc nhân vật \*\*X\*\* \(đã rời bang\)/);
+    });
+    it('the modal submit is admin-gated too', async () => {
+      const called = [];
+      mock.method(gameRoster, 'setGameUid', async () => (called.push(1), { name: 'Kelo', uid: '12345' }));
+      const denied = interaction({ member: { roles: [], permissions: NOBODY }, memberPermissions: NOBODY, fields: { getTextInputValue: () => 'x' } });
+      await adminHandler.handle(denied.i, ['adm', 'gameuidModal']);
+      assert.equal(called.length, 0);
     });
   });
 

@@ -464,7 +464,7 @@ const storedKey = (name) => nameKey(name) || `#${String(name)}`;
 
 const IMPORT_SQL = `select id as "_id", guild_id as "guildId", imported_at as "importedAt", imported_by as "importedBy", source from roster_imports`;
 const CHARACTER_FIELDS = `id, name, rank, class_name as "className", days_in_guild as "daysInGuild", status, off_days as "offDays",
-  first_seen as "firstSeen", left_at as "leftAt", returned_at as "returnedAt", old_names as "oldNames"`;
+  first_seen as "firstSeen", left_at as "leftAt", returned_at as "returnedAt", old_names as "oldNames", game_uid as "gameUid"`;
 
 // The characters an import listed, in its order (only the latest import of a character is known: no per-import history).
 const membersOf = (importId) => db.q(`select ${CHARACTER_FIELDS} from game_characters where last_import_id = $1 order by position`, [importId]);
@@ -588,17 +588,23 @@ async function loadMappings(guildId) {
   return map;
 }
 
+// The row a name points at: the one still in the guild with that name key, else the newest that left. Shared by the links and the
+// game ID claim, so both always land on the same character. -> { id, game_uid } | null
+const findCharacter = (guildId, name, lock = false) =>
+  db.one(`select id, game_uid from game_characters where guild_id = $1 and name_key = $2 order by (left_at is null) desc, left_at desc nulls first, id desc limit 1${lock ? ' for update' : ''}`, [guildId, storedKey(name)]);
+
 // The character a link to `name` points at: the one still in the guild with that name key, else the newest that left, else a new
 // 'typed' character (a name no roster has shown). -> character id
 async function characterFor(guildId, name) {
   const key = storedKey(name);
-  const hit = await db.one(`select id from game_characters where guild_id = $1 and name_key = $2 order by (left_at is null) desc, left_at desc nulls first, id desc limit 1`, [guildId, key]);
+  const hit = await findCharacter(guildId, name);
   if (hit) return hit.id;
   const row = await db.one(`insert into game_characters (guild_id, name_key, name, origin) values ($1, $2, $3, 'typed') returning id`, [guildId, key, String(name).trim()]);
   return row.id;
 }
 
-// Typed characters nobody links any more are forgotten.
+// Typed characters nobody links any more are forgotten. Their game ID goes with them on purpose (a typed row is unverified; the ID is
+// asked again at the gate / by a manager). The gate's own claim removes its row again when an approval fails.
 const forgetUnlinkedTyped = (guildId) =>
   db.q(`delete from game_characters g where g.guild_id = $1 and g.origin = 'typed' and not exists (select 1 from character_links l where l.character_id = g.id)`, [guildId]);
 
@@ -806,12 +812,102 @@ async function renameChoices(guildId, now = new Date()) {
   return { left, fresh, pairs: best };
 }
 
+// ---------- in-game character ID ----------
+
+const GAME_UID_MIN = 5;
+const GAME_UID_MAX = 20;
+// What a member / manager typed -> { uid } ('' = none) or { error } (Vietnamese sentence). Spaces around are trimmed; digits only.
+function cleanGameUid(input) {
+  const uid = String(input ?? '').trim();
+  if (!uid) return { uid: '' };
+  if (!new RegExp(`^[0-9]{${GAME_UID_MIN},${GAME_UID_MAX}}$`).test(uid)) return { error: `ID game chỉ gồm chữ số (${GAME_UID_MIN} đến ${GAME_UID_MAX} số), không có chữ, dấu cách hay ký tự khác.` };
+  return { uid };
+}
+
+// The character (still in the guild or not) that holds `uid`, other than `exceptId`; null when free. -> { id, name, left } | null
+const uidHolder = (guildId, uid, exceptId = null) =>
+  db.one('select id, name, left_at is not null as left from game_characters where guild_id = $1 and game_uid = $2 and ($3::bigint is null or id <> $3::bigint)', [guildId, uid, exceptId]);
+// The sentence for a holder; a departed one may be the same person under a new name.
+const uidTakenText = (holder) => (holder.left ? `ID này thuộc nhân vật **${holder.name}** (đã rời bang) — có thể là cùng người đổi tên: dùng ✏️ Đổi tên.` : `ID game này đang thuộc nhân vật **${holder.name}**.`);
+
+const PENDING_UID_TEXT = 'ID này đang được một người khác dùng để xin vào bang. Kiểm tra lại ID của bạn.';
+
+// A member's ID at the gate: -> { uid } | { error } (format, held by another character - departed ones too, or reserved by another
+// pending request). `exceptName`: the character the member picked - an ID it already carries (a manager typed it) is the member's own.
+async function checkGameUid(guildId, input, { exceptName = null } = {}) {
+  const cleaned = cleanGameUid(input);
+  if (cleaned.error || !cleaned.uid) return cleaned;
+  const own = exceptName ? await findCharacter(guildId, exceptName) : null;
+  if (own && own.game_uid && own.game_uid !== cleaned.uid) return { error: 'Nhân vật này đã có một ID game khác. Nhập đúng ID của nhân vật, hoặc báo quản lý nếu ID cũ bị nhầm.' };
+  const holder = await uidHolder(guildId, cleaned.uid, own ? own.id : null);
+  if (holder) return { error: uidTakenText(holder) };
+  if (await db.one(`select 1 as x from gate_requests where guild_id = $1 and game_uid = $2 and status = 'pending'`, [guildId, cleaned.uid])) return { error: PENDING_UID_TEXT };
+  return cleaned;
+}
+
+// ✏️ A manager sets (or, with uid '', removes) the ID of the character still in the guild called `name`. -> { name, uid } | { error } (Vietnamese)
+async function setGameUid(guildId, name, input) {
+  const cleaned = cleanGameUid(input);
+  if (cleaned.error) return { error: cleaned.error };
+  const typed = String(name ?? '').replace(/\s+/g, ' ').trim();
+  const row = typed ? await db.one('select id, name from game_characters where guild_id = $1 and name_key = $2 and left_at is null', [guildId, storedKey(typed)]) : null;
+  if (!row) return { error: `Không tìm thấy nhân vật **${typed.slice(0, FREE_NAME_MAX) || '?'}** trong danh sách game hiện tại.` };
+  try {
+    if (cleaned.uid) {
+      const holder = await uidHolder(guildId, cleaned.uid, row.id);
+      if (holder) return { error: uidTakenText(holder) };
+    }
+    await db.q('update game_characters set game_uid = $2 where id = $1', [row.id, cleaned.uid || null]);
+  } catch (err) {
+    if (!db.isUniqueViolation(err)) throw err;
+    return { error: 'ID game này vừa được nhân vật khác nhận, thử lại.' };
+  }
+  bump(guildId);
+  return { name: row.name, uid: cleaned.uid || null };
+}
+
+// The gate gives an approved applicant's ID to the character the name points at (the same row the link will use; a name nobody has
+// yet becomes a 'typed' character). Runs in one transaction with the row locked, so two approvals cannot both take an ID. A clash
+// never writes anything. -> { status: 'set' | 'same', characterId, created } | { status: 'clash', text }
+async function claimGameUid(guildId, name, uid) {
+  try {
+    const out = await db.tx(async () => {
+      const row = await findCharacter(guildId, name, true);
+      if (row && row.game_uid === uid) return { status: 'same', characterId: row.id, created: false };
+      if (row && row.game_uid) return { status: 'clash', text: 'Nhân vật này đã có một ID game khác. Báo quản lý nếu ID cũ bị nhầm.' };
+      const holder = await uidHolder(guildId, uid, row ? row.id : null);
+      if (holder) return { status: 'clash', text: uidTakenText(holder) };
+      if (row) {
+        await db.q('update game_characters set game_uid = $2 where id = $1', [row.id, uid]);
+        return { status: 'set', characterId: row.id, created: false };
+      }
+      const made = await db.one(`insert into game_characters (guild_id, name_key, name, origin, game_uid) values ($1, $2, $3, 'typed', $4) returning id`, [guildId, storedKey(name), String(name).trim(), uid]);
+      return { status: 'set', characterId: made.id, created: true };
+    });
+    if (out.status === 'set') bump(guildId);
+    return out;
+  } catch (err) {
+    if (!db.isUniqueViolation(err)) throw err;
+    return { status: 'clash', text: 'ID game này vừa được nhân vật khác nhận.' };
+  }
+}
+
+// Undo a claimGameUid() that set the ID (the approval it belonged to did not finish): the ID is cleared, and a typed row the claim
+// made is removed again (nobody is linked to it yet).
+async function releaseGameUid(guildId, characterId) {
+  await db.q('update game_characters set game_uid = null where guild_id = $1 and id = $2', [guildId, characterId]);
+  await db.q(`delete from game_characters g where g.guild_id = $1 and g.id = $2 and g.origin = 'typed' and not exists (select 1 from character_links l where l.character_id = g.id)`, [guildId, characterId]);
+  bump(guildId);
+}
+
 // Confirms a rename: the character that left (`oldId`) takes over the new one (`newId`): its name, numbers and place in the latest import,
 // back in the guild, the old name kept in old_names. The new row goes; its Discord link moves over when the old character had none.
-// -> { from, to } (names) | { error } (Vietnamese)
+// -> { from, to, note? } (names; note = an ID that was dropped) | { error } (Vietnamese)
 async function renameCharacter(guildId, oldId, newId) {
-  const out = await db.tx(async () => {
-    const rows = await db.q('select id, name, name_key, left_at, origin from game_characters where guild_id = $1 and id = any($2) for update', [guildId, [String(oldId), String(newId)]]);
+  let out;
+  try {
+  out = await db.tx(async () => {
+    const rows = await db.q('select id, name, name_key, left_at, origin, game_uid from game_characters where guild_id = $1 and id = any($2) for update', [guildId, [String(oldId), String(newId)]]);
     const old = rows.find((r) => String(r.id) === String(oldId));
     const neu = rows.find((r) => String(r.id) === String(newId));
     if (!old || !neu || String(oldId) === String(newId)) return { error: 'Không tìm thấy nhân vật (danh sách vừa đổi?). Mở lại ✏️ Đổi tên.' };
@@ -824,18 +920,32 @@ async function renameCharacter(guildId, oldId, newId) {
     const n = await db.one(`select name, name_key, rank, class_name, days_in_guild, status, off_days, last_import_id, position from game_characters where id = $1`, [neu.id]);
     await db.q('update attendance_entries set character_id = $1 where character_id = $2', [old.id, neu.id]);
     await db.q('update gate_requests set character_id = $1 where character_id = $2', [old.id, neu.id]);
+    // the in-game ID follows the character: the old row's, else the one the new row had. Cleared on both rows first, so the
+    // unique index never sees two holders; dropped (not an error) when some other character holds it.
+    let uid = old.game_uid || neu.game_uid || null;
+    const notes = [];
+    if (old.game_uid && neu.game_uid && old.game_uid !== neu.game_uid) notes.push(`ℹ️ Hai dòng có ID game khác nhau: giữ **${old.game_uid}** (tên cũ), bỏ **${neu.game_uid}** (tên mới). Sai thì sửa ở 🆔 ID game.`);
+    await db.q('update game_characters set game_uid = null where id = any($1)', [[old.id, neu.id]]);
+    if (uid && (await db.one('select id from game_characters where guild_id = $1 and game_uid = $2 and id <> all($3)', [guildId, uid, [old.id, neu.id]]))) {
+      notes.push(`ℹ️ ID game **${uid}** đang thuộc nhân vật khác nên không chuyển sang tên mới. Kiểm tra ở 🆔 ID game.`);
+      uid = null;
+    }
     await db.q('delete from game_characters where id = $1', [neu.id]); // first: the active name index would refuse two rows with that name
     await db.q(
       `update game_characters set name = $2, name_key = $3, rank = $4, class_name = $5, days_in_guild = $6, status = $7, off_days = $8,
-         last_import_id = $9, position = $10, origin = 'roster', left_at = null,
+         last_import_id = $9, position = $10, origin = 'roster', left_at = null, game_uid = $12,
          old_names = case when $11 = any(old_names) or $11 = $2 then old_names else array_append(old_names, $11) end
        where id = $1`,
-      [old.id, n.name, n.name_key, n.rank, n.class_name, n.days_in_guild, n.status, n.off_days, n.last_import_id, n.position, old.name]
+      [old.id, n.name, n.name_key, n.rank, n.class_name, n.days_in_guild, n.status, n.off_days, n.last_import_id, n.position, old.name, uid]
     );
-    return { from: old.name, to: n.name };
+    return { from: old.name, to: n.name, ...(notes.length ? { note: notes.join(String.fromCharCode(10)) } : {}) };
   });
+  } catch (err) {
+    if (!db.isUniqueViolation(err)) throw err;
+    return { error: 'Có thay đổi cùng lúc (ID game hoặc tên vừa bị người khác nhận). Mở lại ✏️ Đổi tên rồi thử lại.' };
+  }
   if (!out.error) bump(guildId);
   return out;
 }
 
-module.exports = { renameChoices, renameCharacter, departedOf, parseOffDays, offDaysOf, SHEET, MAX_ROWS, parseRosterXlsx, norm, fold, diff, summarize, matchDiscord, levenshtein, similarity, suggestPairs, rankPeople, gameNameMap, nameSources, linkCounts, rankGames, nameKey, isCutName, normalizeCut, cutStem, skeleton, cleanFreeName, FREE_NAME_MAX,  TAKEN_ADMIN_MSG, TAKEN_SELF_MSG, TAKEN_AUTO_MSG, takenMessage, getLink, selfLink, selfUnlink,  saveImport, addManualMember, latest, byId, latestMeta, latestRanks, epochOf, bump, rosterVersion, previous, loadMappings, setMappings, removeMappings, matchGuild };
+module.exports = { cleanGameUid, checkGameUid, uidHolder, setGameUid, claimGameUid, releaseGameUid, findCharacter, GAME_UID_MIN, GAME_UID_MAX, renameChoices, renameCharacter, departedOf, parseOffDays, offDaysOf, SHEET, MAX_ROWS, parseRosterXlsx, norm, fold, diff, summarize, matchDiscord, levenshtein, similarity, suggestPairs, rankPeople, gameNameMap, nameSources, linkCounts, rankGames, nameKey, isCutName, normalizeCut, cutStem, skeleton, cleanFreeName, FREE_NAME_MAX,  TAKEN_ADMIN_MSG, TAKEN_SELF_MSG, TAKEN_AUTO_MSG, takenMessage, getLink, selfLink, selfUnlink,  saveImport, addManualMember, latest, byId, latestMeta, latestRanks, epochOf, bump, rosterVersion, previous, loadMappings, setMappings, removeMappings, matchGuild };

@@ -131,6 +131,77 @@ describe('join requests', () => {
     const row = await db.one('select character_id from gate_requests where id = $1', [a.request._id]);
     assert.ok(row.character_id, 'linked to the roster character');
   });
+  it('the optional in-game ID is stored on the request and read back (null when not given)', async () => {
+    const a = await ask(1, { gameUid: '12345678' });
+    assert.equal(a.request.gameUid, '12345678');
+    assert.equal((await gate.getRequest(a.request._id, G)).gameUid, '12345678');
+    const b = await ask(2);
+    assert.equal(b.request.gameUid, null);
+  });
+  it('another pending request with the same game ID: createPending answers a friendly uidClash instead of throwing; after that request is decided the ID is free again', async () => {
+    const a = await ask(1, { gameUid: '12345678' });
+    assert.equal(a.created, true);
+    const b = await ask(2, { gameUid: '12345678' });
+    assert.equal(b.created, false);
+    assert.equal(b.request, null);
+    assert.match(b.uidClash, /người khác dùng để xin vào bang/);
+    assert.equal((await db.one(`select count(*) as n from gate_requests`)).n, 1);
+    await gate.decide(a.request._id, 'cancelled', { by: 'x', reason: gate.UID_CLASH_REASON });
+    assert.equal((await ask(2, { gameUid: '12345678' })).created, true);
+  });
+  it('the pending-ID index firing with no visible holder (a race) still answers a friendly uidClash', async () => {
+    const real = gr.checkGameUid;
+    await ask(1, { gameUid: '12345678' });
+    gr.checkGameUid = async () => ({ uid: '12345678' }); // the holder vanished between the violation and the lookup
+    try {
+      const b = await ask(2, { gameUid: '12345678' });
+      assert.equal(b.request, null);
+      assert.match(b.uidClash, /vừa được người khác dùng/);
+    } finally {
+      gr.checkGameUid = real;
+    }
+  });
+  it('decideWithUid: gives the ID to the character and approves in one go; a clash decides nothing; a lost race rolls the ID back', async () => {
+    const mk = async (n, uid) => (await ask(n, { gameUid: uid })).request;
+    const claimOf = (name, uid) => ({ guildId: G, name, uid });
+    const uidOf = async (name) => (await db.one('select game_uid from game_characters where name = $1', [name])).game_uid;
+    const r1 = await mk(1, '11111');
+    const ok = await gate.decideWithUid(r1._id, 'approved', { by: 'm' }, claimOf('Hắc Phong', '11111'));
+    assert.equal(ok.decided.status, 'approved');
+    assert.equal(ok.claim.status, 'set');
+    assert.equal(await uidOf('Hắc Phong'), '11111');
+    // a different ID for a character that already has one: clash, the request stays pending
+    const r2 = await mk(2, '22222');
+    const clash = await gate.decideWithUid(r2._id, 'approved', { by: 'm' }, claimOf('Hắc Phong', '22222'));
+    assert.match(clash.clash, /đã có một ID game khác/);
+    assert.equal((await gate.getRequest(r2._id, G)).status, 'pending');
+    assert.equal(await uidOf('Hắc Phong'), '11111');
+    // already decided by somebody else: nothing is kept
+    await gate.decide(r2._id, 'rejected', { by: 'other' });
+    await db.q(`update game_characters set game_uid = null where name = 'Hắc Phong'`);
+    const lost = await gate.decideWithUid(r2._id, 'approved', { by: 'm' }, claimOf('Hắc Phong', '22222'));
+    assert.equal(lost.decided, null);
+    assert.equal(await uidOf('Hắc Phong'), null, 'the claim was rolled back with the lost decision');
+    // an old request without an ID is just decided
+    const old = (await ask(3)).request;
+    assert.equal((await gate.decideWithUid(old._id, 'approved', { by: 'm' }, null)).decided.status, 'approved');
+  });
+  it('an ID clash cancellation is exempt from the 12 h cooldown, a rejection is not', async () => {
+    const a = await ask(1, { gameUid: '12345678' });
+    await gate.decide(a.request._id, 'cancelled', { by: 'm', reason: gate.UID_CLASH_REASON });
+    assert.equal(await gate.recentDecision(G, sid(1)), null);
+    const b = await ask(1, { gameUid: '12345678' });
+    await gate.decide(b.request._id, 'rejected', { by: 'm', reason: 'no' });
+    assert.ok(await gate.recentDecision(G, sid(1)));
+  });
+  it('unnoteRequest takes back the last count of the hourly limit', () => {
+    gate.resetRequestLimits();
+    for (let n = 0; n < 3; n++) gate.noteRequest(G, sid(9));
+    assert.ok(gate.requestBlockedUntil(G, sid(9)));
+    gate.unnoteRequest(G, sid(9));
+    assert.equal(gate.requestBlockedUntil(G, sid(9)), null);
+    gate.resetRequestLimits();
+  });
   it('decide / revoke / reopen are compare-and-set; getRequest is scoped to the guild', async () => {
     const { request } = await ask(1);
     assert.equal((await gate.decide(request._id, 'approved', { by: 'adm', reason: 'ok' })).status, 'approved');

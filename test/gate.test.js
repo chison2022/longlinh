@@ -32,6 +32,22 @@ let roster;
 let mappings;
 let saved;
 let reqs;
+let uidHeld; // game ID -> { name, left } : a character that holds it (the DB check is stubbed; the format check is the real one)
+let uidClaims; // [[name, uid]] the grant gave to a character
+let claimResult;
+const UID = '12345678';
+let uidOwn; // character name key -> the ID it already carries (the chosen character)
+let uidReleased; // [[guildId, characterId]] IDs taken back after a failed approval
+gameRoster.checkGameUid = async (_g, input, { exceptName = null } = {}) => {
+  const c = gameRoster.cleanGameUid(input);
+  const h = c.uid && uidHeld.get(c.uid);
+  if (h && exceptName && gameRoster.nameKey(h.name) === gameRoster.nameKey(exceptName)) return c; // the chosen character's own ID
+  const own = exceptName && uidOwn.get(gameRoster.nameKey(exceptName));
+  if (c.uid && own && own !== c.uid) return { error: 'Nhân vật này đã có một ID game khác. Nhập đúng ID của nhân vật, hoặc báo quản lý nếu ID cũ bị nhầm.' };
+  return h ? { error: h.left ? `ID này thuộc nhân vật **${h.name}** (đã rời bang) — có thể là cùng người đổi tên: dùng ✏️ Đổi tên.` : `ID game này đang thuộc nhân vật **${h.name}**.` } : c;
+};
+gameRoster.claimGameUid = async (_g, name, uid) => (uidClaims.push([name, uid]), claimResult);
+gameRoster.releaseGameUid = async (g, id) => uidReleased.push([g, id]);
 guildConfigService.getConfigOrDefault = async () => config;
 guildConfigService.getConfig = async () => config;
 registrationService.saveMemberClass = async (...a) => {
@@ -52,7 +68,7 @@ gateService.findPending = async (g, d) => reqs.find((r) => same(r, g, d) && r.st
 gateService.getRequest = async (id, guildId) => reqs.find((r) => String(r._id) === String(id) && (r.guildId === undefined || r.guildId === guildId)) || null;
 // the cooldown query: a request that ended badly with decidedAt inside the window (the stub `decide` leaves decidedAt unset: no cooldown)
 gateService.recentDecision = async (g, d, { now = Date.now(), cooldownMs = gateService.COOLDOWN_MS } = {}) =>
-  reqs.find((r) => same(r, g, d) && ['rejected', 'cancelled', 'guest'].includes(r.status) && r.decidedAt && r.decidedAt.getTime() >= now - cooldownMs && r.reason !== gateService.CARD_FAILED_REASON) || null;
+  reqs.find((r) => same(r, g, d) && ['rejected', 'cancelled', 'guest'].includes(r.status) && r.decidedAt && r.decidedAt.getTime() >= now - cooldownMs && ![gateService.CARD_FAILED_REASON, gateService.UID_CLASH_REASON].includes(r.reason)) || null;
 guildConfigService.getOrCreateConfig = async () => config;
 guildConfigService.updateConfig = async (_g, patch) => (config = { ...config, ...patch });
 gateService.createPending = async (data) => {
@@ -80,6 +96,16 @@ gateService.reopen = async (id, from) => {
   if (!r) return null;
   Object.assign(r, { status: 'pending', decidedBy: null, reason: '' });
   return { ...r };
+};
+// the real one is a transaction: the ID clash decides nothing, otherwise the claim and the status change go together
+gateService.decideWithUid = async (id, status, opts, claim) => {
+  let got = null;
+  if (claim) {
+    got = await gameRoster.claimGameUid(claim.guildId, claim.name, claim.uid);
+    if (got.status === 'clash') return { clash: got.text };
+  }
+  const decided = await gateService.decide(id, status, opts);
+  return decided ? { decided, claim: got } : { decided: null };
 };
 // the same atomic rule as the real one: only an approved request is revoked
 gateService.revoke = async (id, { by = null, reason = '' } = {}) => {
@@ -218,7 +244,7 @@ function interactionOf(w, { user = USER, name = 'Beta Boss', roleIds = [], admin
     member,
     memberPermissions: admin ? MANAGE : NOBODY,
     values,
-    fields: fields && { getTextInputValue: (k) => fields[k] ?? '' },
+    fields: { getTextInputValue: (k) => (fields || {})[k] ?? (k === 'uid' ? UID : '') }, // the send form's ID is filled unless a test says otherwise
     message,
     deferReply: async (o) => log.push(['deferReply', o]),
     deferUpdate: async () => log.push(['deferUpdate']),
@@ -254,6 +280,11 @@ beforeEach(() => {
   mappings = makeMappings();
   saved = { classes: [], mappings: [], mapError: null, unlinked: [] };
   reqs = [];
+  uidHeld = new Map();
+  uidClaims = [];
+  claimResult = { status: 'set', characterId: 7, created: false };
+  uidReleased = [];
+  uidOwn = new Map();
   lines = [];
   gateService.resetRequestLimits();
   eventLog.setSink((l) => lines.push(l));
@@ -274,7 +305,7 @@ async function sendRequest({ w = world({ members: [[ADMIN, 'Quản Lý', []]] })
   const p = interactionOf(w, { user, name, values: [pick] });
   await gate.handle(p.i, ['gate', 'pick', '0', VER]);
   const s = interactionOf(w, { user, name });
-  await gate.handle(s.i, ['gate', 'send', `r${pick}-${VER}`, String(classIndex)]);
+  await gate.handle(s.i, ['gate', 'sendModal', `r${pick}-${VER}`, String(classIndex)]);
   const cardEntry = w.rec.sent.filter((x) => x[0] === 'c-admin').pop();
   return { w, applicant: a, request: reqs[reqs.length - 1], card: cardEntry && cardEntry[1], sendLog: s.log };
 }
@@ -666,7 +697,7 @@ describe('gate:member', () => {
     config.pendingRoleId = 'r-pending'; // legacy field: never read
     const { w, request, card, sendLog } = await sendRequest({ classIndex: 1 });
     assert.equal(reqs.length, 1);
-    assert.deepEqual({ ...request, _id: undefined }, { _id: undefined, guildId: GUILD, discordId: USER, displayName: 'Beta Boss', gameName: 'Beta Boss', gameNameFree: false, className: 'Tố Vấn', adminChannelId: 'c-admin', status: 'pending', reason: '', adminMessageId: 'msg-1' });
+    assert.deepEqual({ ...request, _id: undefined }, { _id: undefined, guildId: GUILD, discordId: USER, displayName: 'Beta Boss', gameName: 'Beta Boss', gameNameFree: false, className: 'Tố Vấn', gameUid: UID, adminChannelId: 'c-admin', status: 'pending', reason: '', adminMessageId: 'msg-1' });
     assert.deepEqual(w.rec.roleCalls, [], 'no role is added or removed on send');
     assert.ok(card);
     assert.ok(!last(sendLog).content.includes('Chờ duyệt'));
@@ -677,7 +708,7 @@ describe('gate:member', () => {
   it('a second send (parallel or repeated click) shows the pending status and posts no second card', async () => {
     const { w } = await sendRequest();
     const again = interactionOf(w);
-    await gate.handle(again.i, ['gate', 'send', `r1-${VER}`, '0']);
+    await gate.handle(again.i, ['gate', 'sendModal', `r1-${VER}`, '0']);
     assert.match(last(again.log).content, /đang \*\*chờ quản lý duyệt\*\*/);
     assert.equal(reqs.length, 1);
     assert.equal(w.rec.sent.filter((s) => s[0] === 'c-admin').length, 1);
@@ -686,7 +717,7 @@ describe('gate:member', () => {
     assert.match(last(reopen.log).content, /chờ quản lý duyệt/);
     // truly parallel clicks: one wins
     const w2 = world();
-    const run = () => gate.handle(interactionOf(w2).i, ['gate', 'send', `r1-${VER}`, '0']);
+    const run = () => gate.handle(interactionOf(w2).i, ['gate', 'sendModal', `r1-${VER}`, '0']);
     await Promise.all([run(), run()]);
     assert.equal(reqs.filter((r) => r.status === 'pending' && r.discordId === USER).length, 1);
   });
@@ -694,7 +725,7 @@ describe('gate:member', () => {
     const w = world();
     mappings = makeMappings([[sid(8), 'Beta Boss', 'self']]);
     const { i, log } = interactionOf(w);
-    await gate.handle(i, ['gate', 'send', `r1-${VER}`, '0']);
+    await gate.handle(i, ['gate', 'sendModal', `r1-${VER}`, '0']);
     assert.match(last(log).content, new RegExp(gameRoster.TAKEN_SELF_MSG));
     assert.equal(reqs.length, 0);
     assert.deepEqual(w.rec.sent, []);
@@ -703,7 +734,7 @@ describe('gate:member', () => {
     config.adminChannelId = null;
     const w = world();
     const { i, log } = interactionOf(w);
-    await gate.handle(i, ['gate', 'send', `r1-${VER}`, '0']);
+    await gate.handle(i, ['gate', 'sendModal', `r1-${VER}`, '0']);
     assert.match(last(log).content, /chưa chọn kênh nhận yêu cầu/);
     assert.equal(reqs.length, 0);
   });
@@ -719,7 +750,7 @@ describe('gate:member', () => {
       throw Object.assign(new Error('Missing Access'), { code: 50001 });
     };
     const { i, log } = interactionOf(w);
-    await gate.handle(i, ['gate', 'send', `r1-${VER}`, '0']);
+    await gate.handle(i, ['gate', 'sendModal', `r1-${VER}`, '0']);
     assert.equal(reqs[0].status, 'cancelled');
     assert.deepEqual(w.rec.roleCalls, []);
     assert.match(last(log).content, /Không gửi được yêu cầu/);
@@ -730,7 +761,7 @@ describe('gate:member', () => {
     await gate.handle(m.i, ['gate', 'member']);
     assert.match(last(m.log).content, /Bạn đã là thành viên bang\./);
     const s = interactionOf(w, { user: USER, roleIds: ['r-member'] });
-    await gate.handle(s.i, ['gate', 'send', `r1-${VER}`, '0']);
+    await gate.handle(s.i, ['gate', 'sendModal', `r1-${VER}`, '0']);
     assert.match(last(s.log).content, /Bạn đã là thành viên bang\./);
     config.gateEnabled = false;
     const off = interactionOf(world());
@@ -744,7 +775,7 @@ describe('gate:member', () => {
     await gate.handle(a.i, ['gate', 'member']);
     assert.match(last(a.log).content, /tự nhập tên/);
     const s = interactionOf(w);
-    await gate.handle(s.i, ['gate', 'send', 'f-Người Lạ', '0']);
+    await gate.handle(s.i, ['gate', 'sendModal', 'f-Người Lạ', '0']);
     assert.equal(reqs[0].gameNameFree, true);
     const text = textOf(w.rec.sent.at(-1)[1]);
     assert.match(text, /\(tự nhập\)/);
@@ -1166,7 +1197,7 @@ describe('H1: the class role the bot hands out must be safe', () => {
       const w = world({ members: [[ADMIN, 'Quản Lý', []]] });
       grant(w, 'r-pending', 'BanMembers');
       const a = interactionOf(w);
-      await gate.handle(a.i, ['gate', 'send', `r1-${VER}`, '0']);
+      await gate.handle(a.i, ['gate', 'sendModal', `r1-${VER}`, '0']);
       assert.equal(reqs.length, 1);
       assert.deepEqual(w.rec.roleCalls, []);
       assert.equal(w.rec.sent.length, 1, 'the card is posted');
@@ -1205,7 +1236,7 @@ describe('M5: gate request flood control', () => {
       assert.match(last(log).content, /<t:\d+:f> \(<t:\d+:R>\)/);
       assert.equal(last(log).components.length, 0, 'no picker');
       const send = interactionOf(w);
-      await gate.handle(send.i, ['gate', 'send', `r1-${VER}`, '0']);
+      await gate.handle(send.i, ['gate', 'sendModal', `r1-${VER}`, '0']);
       assert.equal(reqs.length, 1, `${status}: no new request`);
       assert.equal(w.rec.sent.length, 0);
     }
@@ -1292,10 +1323,26 @@ describe('L3 / L4: approve re-checks the name and survives a failed step', () =>
       assert.ok(w.rec.roleCalls.some((c) => c[0] === 'add' && c[2].includes('r-member')));
       assert.equal(ev('gate.link_skipped').length, 1);
       assert.equal(w.rec.dms.length, 1, 'the member is still told');
+      assert.deepEqual(uidReleased, [[GUILD, 7]], 'the ID does not stay on a character the member is not linked to');
+      assert.match(text, /ID game chưa lưu vì chưa liên kết nhân vật/);
     } finally {
       gameRoster.latest = realLatest;
       gameRoster.loadMappings = realLoad;
     }
+  });
+  it('a link that cannot be saved takes the ID back too and says so', async () => {
+    const { w, request, card } = await sendRequest();
+    saved.mapError = new Error('boom');
+    const { text } = await approve(w, request, card);
+    assert.equal(reqs[0].status, 'approved');
+    assert.deepEqual(uidReleased, [[GUILD, 7]]);
+    assert.match(text, /ID game chưa lưu vì chưa liên kết nhân vật/);
+  });
+  it('a link that is fine keeps the ID and shows no such note', async () => {
+    const { w, request, card } = await sendRequest();
+    const { text } = await approve(w, request, card);
+    assert.deepEqual(uidReleased, []);
+    assert.doesNotMatch(text, /chưa liên kết nhân vật/);
   });
   it('a free name still links when nobody took it', async () => {
     const { w, request, card } = await sendRequest();
@@ -1314,6 +1361,177 @@ describe('L3 / L4: approve re-checks the name and survives a failed step', () =>
     } finally {
       saved.classError = null;
     }
+  });
+});
+
+describe('🆔 game ID at the gate (required)', () => {
+  const sendWith = async (uid, { w = world({ members: [[ADMIN, 'Quản Lý', []]] }), token = `r1-${VER}` } = {}) => {
+    const s = interactionOf(w, { fields: { uid } });
+    await gate.handle(s.i, ['gate', 'sendModal', token, '0']);
+    return { w, s };
+  };
+  it('📨 Gửi yêu cầu opens a required ID form (customId within 100 chars even for the longest typed name)', async () => {
+    const w = world();
+    const { i, log } = interactionOf(w);
+    await gate.handle(i, ['gate', 'send', `r1-${VER}`, '3']);
+    const modal = assertModal(log.find((l) => l[0] === 'showModal')[1]);
+    assert.equal(modal.custom_id, `gate:sendModal:r1-${VER}:3`);
+    const input = modal.components[0].component;
+    assert.deepEqual([input.custom_id, input.required, input.max_length], ['uid', true, 20]);
+    assert.doesNotMatch(modal.components[0].label, /không bắt buộc/);
+    const longest = ui.sendModal(ui.freeToken('Â'.repeat(32)), 24).toJSON();
+    assert.ok(longest.custom_id.length <= 100, longest.custom_id.length);
+    assert.equal(log.filter((l) => l[0] === 'deferUpdate').length, 0, 'a modal must be the first response');
+  });
+  it('the summary tells the member the ID is asked on send', () => {
+    const view = ui.buildSummary({ token: `r1-${VER}`, classIndex: 0, name: 'Beta Boss', free: false, className: 'Thiết Y', styles: new Map() });
+    assert.match(view.content, /nhập ID nhân vật trong game/);
+  });
+  it('no ID, a bad ID or a taken one: no request, no card, no role; the member sees why on the summary and can retry', async () => {
+    uidHeld.set('99999', { name: 'Người Cũ', left: false });
+    uidHeld.set('88888', { name: 'Người Đi', left: true });
+    for (const [uid, pattern] of [['', /Cần nhập ID/], ['  ', /Cần nhập ID/], ['12ab', /chữ số/], ['1234', /chữ số/], ['99999', /thuộc nhân vật \*\*Người Cũ\*\*/], ['88888', /\*\*Người Đi\*\* \(đã rời bang\).*Đổi tên/]]) {
+      const { w, s } = await sendWith(uid);
+      assert.equal(reqs.length, 0, `[${uid}] no request`);
+      assert.equal(w.rec.sent.length, 0, `[${uid}] no card`);
+      assert.equal(w.rec.roleCalls.length, 0);
+      const view = last(s.log);
+      assert.match(view.content, pattern, uid);
+      assert.equal(jsonRows(view)[0].components[0].custom_id, `gate:send:r1-${VER}:0`, 'the send button is still there');
+    }
+  });
+  it('a valid ID is trimmed, stored on the request and shown on the managers card', async () => {
+    const { w } = await sendWith(' 00123456789 ');
+    assert.equal(reqs[0].gameUid, '00123456789');
+    const card = w.rec.sent.filter((x) => x[0] === 'c-admin').pop()[1];
+    assert.match(assertV2Message(card, { forCreate: true }).text, /🆔 ID game: 00123456789/);
+  });
+  const CLASH = { status: 'clash', text: 'ID này thuộc nhân vật **Người Đi** (đã rời bang) — có thể là cùng người đổi tên: dùng ✏️ Đổi tên.' };
+  it('✅ Duyệt claims the ID for the linked character before anything is decided', async () => {
+    const { w, request, card } = await sendRequest();
+    const { i } = interactionOf(w, { user: ADMIN, admin: true, message: cardMessageOf(card) });
+    await gate.handle(i, ['gate', 'ok', String(request._id)]);
+    assert.equal(request.status, 'approved');
+    assert.deepEqual(uidClaims, [['Beta Boss', UID]]);
+    assert.deepEqual(uidReleased, []);
+  });
+  it('✅ Duyệt on a clashing ID approves NOTHING: no role, no link, request cancelled without a cooldown, card says ID trùng, the member is told in DM', async () => {
+    const { w, request, card } = await sendRequest();
+    claimResult = CLASH; // somebody got the ID after the request was sent
+    const before = w.rec.roleCalls.length;
+    const { i, log } = interactionOf(w, { user: ADMIN, admin: true, message: cardMessageOf(card) });
+    await gate.handle(i, ['gate', 'ok', String(request._id)]);
+    assert.equal(request.status, 'cancelled');
+    assert.equal(request.reason, gateService.UID_CLASH_REASON);
+    assert.equal(w.rec.roleCalls.length, before, 'no role');
+    assert.deepEqual(saved.mappings, []);
+    assert.deepEqual(saved.classes, []);
+    const text = textOf(last(log));
+    assert.match(text, /ID game \*\*12345678\*\* bị trùng/);
+    assert.match(text, /Người Đi\*\* \(đã rời bang\)/);
+    assert.equal(assertV2Message(last(log)).buttons.length, 0, 'a decided card');
+    assert.equal(w.rec.dms.length, 1);
+    assert.match(w.rec.dms[0][1].content, /bị trùng/);
+    assert.match(w.rec.dms[0][1].content, /gửi lại với ID đúng/);
+    assert.equal(ev('gate.approve').length, 0);
+    assert.equal(ev('gate.uid_clash').length, 1);
+    const again = interactionOf(w);
+    await gate.handle(again.i, ['gate', 'member']);
+    assert.ok(last(again.log).components.length > 0, 'the picker opens again: no cooldown');
+  });
+  it('a manager-side clash does not use up the hourly limit either (the request was counted when sent)', async () => {
+    const { w, request, card } = await sendRequest();
+    assert.equal(gateService.requestBlockedUntil(GUILD, USER), null);
+    for (let n = 0; n < 2; n++) gateService.noteRequest(GUILD, USER); // 3 counted now: at the limit
+    assert.ok(gateService.requestBlockedUntil(GUILD, USER));
+    claimResult = CLASH;
+    const { i } = interactionOf(w, { user: ADMIN, admin: true, message: cardMessageOf(card) });
+    await gate.handle(i, ['gate', 'ok', String(request._id)]);
+    assert.equal(gateService.requestBlockedUntil(GUILD, USER), null, 'one count was taken back');
+  });
+  it('a chosen character that already has a DIFFERENT ID is refused at send, with the summary to retry; its own ID is fine', async () => {
+    uidOwn.set(gameRoster.nameKey('Beta Boss'), '55555555');
+    const bad = await sendWith('12345678');
+    assert.equal(reqs.length, 0);
+    assert.equal(bad.w.rec.sent.length, 0);
+    assert.match(last(bad.s.log).content, /đã có một ID game khác/);
+    assert.match(last(bad.s.log).content, /nhập lại ID/);
+    assert.equal(jsonRows(last(bad.s.log))[0].components[0].custom_id, `gate:send:r1-${VER}:0`);
+    await sendWith('55555555', { w: world({ members: [[ADMIN, 'Quản Lý', []]] }) });
+    assert.equal(reqs.length, 1);
+  });
+  it('✅ Duyệt on a clash with the DM closed: one public line in the gate channel instead', async () => {
+    const w = world({ members: [[ADMIN, 'Quản Lý', []]], dmFails: [USER] });
+    const { request, card } = await sendRequest({ w });
+    claimResult = CLASH;
+    const { i } = interactionOf(w, { user: ADMIN, admin: true, message: cardMessageOf(card) });
+    await gate.handle(i, ['gate', 'ok', String(request._id)]);
+    const line = w.rec.sent.filter((x) => x[0] === 'c-gate').pop();
+    assert.match(line[1].content, new RegExp(`<@${USER}> ID game`));
+    assert.deepEqual(line[1].allowedMentions, { users: [USER] });
+  });
+  it('auto-approval on a clash: no role, no card to the managers, request cancelled, the member re-enters the ID on the summary and the retry works', async () => {
+    config.gateAutoApprove = true;
+    claimResult = CLASH;
+    const first = await sendRequest();
+    assert.equal(first.request.status, 'cancelled');
+    assert.equal(first.request.reason, gateService.UID_CLASH_REASON);
+    assert.equal(first.w.rec.roleCalls.length, 0);
+    assert.equal(first.w.rec.sent.filter((x) => x[0] === 'c-admin').length, 0, 'managers are not bothered');
+    assert.deepEqual(saved.mappings, []);
+    const view = last(first.sendLog);
+    assert.match(view.content, /Người Đi\*\* \(đã rời bang\)/);
+    assert.match(view.content, /nhập lại ID/);
+    assert.equal(jsonRows(view)[0].components[0].custom_id, `gate:send:r1-${VER}:0`);
+    claimResult = { status: 'set', characterId: 7, created: false };
+    const w = first.w;
+    const retry = interactionOf(w, { fields: { uid: '99999999' } });
+    await gate.handle(retry.i, ['gate', 'sendModal', `r1-${VER}`, '0']);
+    assert.equal(reqs.at(-1).status, 'approved');
+    assert.ok(w.rec.roleCalls.some((c) => c[0] === 'add' && c[2].includes('r-member')));
+  });
+  it('clashes do not burn the 3-requests-per-hour limit', async () => {
+    config.gateAutoApprove = true;
+    claimResult = CLASH;
+    const w = world({ members: [[ADMIN, 'Quản Lý', []]] });
+    for (let n = 0; n < 5; n++) {
+      const s = interactionOf(w);
+      await gate.handle(s.i, ['gate', 'sendModal', `r1-${VER}`, '0']);
+      assert.match(last(s.log).content, /nhập lại ID/, `attempt ${n}`);
+    }
+    assert.equal(gateService.requestBlockedUntil(GUILD, USER), null);
+    claimResult = { status: 'set', characterId: 7, created: false };
+    const ok = interactionOf(w);
+    await gate.handle(ok.i, ['gate', 'sendModal', `r1-${VER}`, '0']);
+    assert.equal(reqs.at(-1).status, 'approved');
+  });
+  it('a failed role call after the ID was claimed takes the ID back (only when this approval set it)', async () => {
+    for (const [status, released] of [['set', [[GUILD, 7]]], ['same', []]]) {
+      uidReleased = [];
+      claimResult = { status, characterId: 7, created: false };
+      reqs = [];
+      const w = world({ members: [[ADMIN, 'Quản Lý', []]], roleFails: { add: ['r-member'] } });
+      const { request, card } = await sendRequest({ w });
+      const { i } = interactionOf(w, { user: ADMIN, admin: true, message: cardMessageOf(card) });
+      await gate.handle(i, ['gate', 'ok', String(request._id)]);
+      assert.equal(reqs[0].status, 'pending', 'a retry is possible');
+      assert.deepEqual(uidReleased, released, status);
+    }
+  });
+  it("the member's own ID, already typed on the roster row by a manager, is accepted for that very character", async () => {
+    uidHeld.set('55555', { name: 'Beta Boss', left: false }); // pick r1 = Beta Boss
+    const { s } = await sendWith('55555');
+    assert.equal(reqs.length, 1);
+    assert.equal(reqs[0].gameUid, '55555');
+    uidHeld.set('66666', { name: 'Gamma', left: false });
+    reqs = [];
+    const other = await sendWith('66666', { w: world({ members: [[ADMIN, 'Quản Lý', []]] }) });
+    assert.equal(reqs.length, 0, "another character's ID is still refused");
+    assert.match(last(other.s.log).content, /Gamma/);
+  });
+  it('a card without an ID (an old request) shows no ID line', () => {
+    const texts = ui.approvalTexts({ request: { discordId: USER, gameName: 'X', gameUid: null }, member: { displayName: 'M', createdAt: new Date(), joinedAt: null }, classText: 'c' });
+    assert.doesNotMatch(texts.join('\n'), /ID game/);
   });
 });
 
@@ -1339,7 +1557,7 @@ describe('🤖 auto-approval (a roster name) and ↩️ Thu hồi', () => {
   it('a typed name (not in the roster) still waits for a manager: pending card with ✅ / ❌, no role', async () => {
     const w = world({ members: [[ADMIN, 'Quản Lý', []]] });
     const s = interactionOf(w);
-    await gate.handle(s.i, ['gate', 'send', 'f-Tên Lạ', '0']);
+    await gate.handle(s.i, ['gate', 'sendModal', 'f-Tên Lạ', '0']);
     assert.equal(reqs[0].status, 'pending');
     assert.equal(w.rec.roleCalls.length, 0);
     const card = w.rec.sent.filter((x) => x[0] === 'c-admin').pop()[1];

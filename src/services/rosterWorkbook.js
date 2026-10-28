@@ -40,15 +40,17 @@ async function buildGameRosterXlsx(members, { classes = [], styles = {} } = {}) 
     { header: 'Ngày vào bang', width: 15 },
     { header: 'Trạng thái (lúc quay)', width: 22 },
     { header: 'Discord', width: 10 },
+    { header: 'ID game', width: 22 },
   ];
   ws.getRow(1).eachCell((cell) => style(cell, { fill: HEAD_FILL, bold: true, border: box() }));
   const order = [...classes, ...[...new Set(members.map((m) => m.className))].filter((c) => !classes.includes(c))];
   members.forEach((m, i) => {
-    const row = ws.addRow([i + 1, String(m.name ?? ''), m.rank || '', m.className || '', Number(m.daysInGuild) || 0, m.status || '', m.inDiscord ? 'Có' : '']);
+    const row = ws.addRow([i + 1, String(m.name ?? ''), m.rank || '', m.className || '', Number(m.daysInGuild) || 0, m.status || '', m.inDiscord ? 'Có' : '', m.gameUid ? String(m.gameUid) : '']);
     row.eachCell((cell) => style(cell, { border: box() }));
     const color = (styles[m.className] && styles[m.className].color) || chipColor(Math.max(order.indexOf(m.className), 0));
     style(row.getCell(4), { fill: tint(color), border: { ...box(), left: edge(color.slice(1), 'thick') } });
     row.getCell(5).numFmt = '#,##0';
+    row.getCell(8).numFmt = '@'; // text: leading zeros and long numbers stay as typed
   });
   ws.autoFilter = { from: 'A1', to: 'H1' };
   return Buffer.from(await wb.xlsx.writeBuffer());

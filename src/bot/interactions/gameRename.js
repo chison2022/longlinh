@@ -96,7 +96,7 @@ async function handle(interaction, parts) {
     invalidateGameNames(guildId);
     scheduleSync(interaction.client, guildId);
     schedulePanelRefresh(interaction.client, guildId);
-    return interaction.editReply(firstView(await gameRoster.renameChoices(guildId), `✅ **${esc(out.from)}** → **${esc(out.to)}**: đã gộp vào một nhân vật (tên cũ được giữ, liên kết giữ nguyên).`));
+    return interaction.editReply(firstView(await gameRoster.renameChoices(guildId), `✅ **${esc(out.from)}** → **${esc(out.to)}**: đã gộp vào một nhân vật (tên cũ được giữ, liên kết giữ nguyên).${out.note ? '\n' + out.note : ''}`));
   }
   return interaction.editReply(firstView(choices));
 }

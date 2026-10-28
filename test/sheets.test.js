@@ -287,6 +287,16 @@ describe('managedTab.merge (what people typed is kept)', () => {
     assert.deepEqual(out.rows, [['An', '', 0]]);
   });
 
+  it('a NEW bot column never swallows a column somebody added at that position (ID game vs "Zalo"); their data stays', () => {
+    const old = ['Tên game', 'Phái', 'Ghi chú'];
+    const grown = [...old, 'ID game'];
+    const before = [old, ['An', 'Tố Vấn', '']];
+    const current = [[...old, 'Zalo'], ['An', 'Tố Vấn', '', '0912345678']];
+    const out = merge({ header: grown, keyOf, manual: ['Ghi chú'], rows: [['An', 'Tố Vấn', '', '123456']], current, before });
+    assert.deepEqual(out.header, [...grown, 'Zalo']);
+    assert.deepEqual(out.rows, [['An', 'Tố Vấn', '', '123456', '0912345678']]);
+  });
+
   it('a row whose key somebody cleared is dropped unless it holds something in a column people own', () => {
     const before = [header, ['An', 'Tố Vấn', '', '']];
     const current = [header, ['', 'Tố Vấn', '', ''], ['', '', '', 'ghi chú lẻ']];
@@ -386,7 +396,7 @@ describe('feed.buildSheet', () => {
     const regs = [sid(1), sid(2), sid(3), sid(4)].map((discordId, i) => ({ discordId, status: i === 1 ? 'absent' : 'join', className: 'Tố Vấn', createdAt: vn(2026, 10, 21, 9) }));
     const tn = tab(buildSheet(data({ week: { war: war(1, 24), regs } })), feed.WEEK_TAB);
     assert.deepEqual(tn.rows.map((r) => [r[0], r[3], r[7]]), [['Người Mới', '⏳ Chưa báo', ''], ['An Game', '✅ Đi', sid(1)], ['', '❌ Vắng', sid(2)]]);
-    assert.deepEqual(tn.rows[1][1], fx('=IFERROR(VLOOKUP($A{r},ThanhVien!$A:$O,7,FALSE),"")'));
+    assert.deepEqual(tn.rows[1][1], fx('=IFERROR(VLOOKUP($A{r},ThanhVien!$A:$P,7,FALSE),"")'));
     assert.equal(tn.rows[2][1], 'Bình');
   });
 
@@ -401,8 +411,8 @@ describe('feed.buildSheet', () => {
     const ls = tab(buildSheet(data({ history, attendance })), feed.HISTORY_TAB);
     assert.deepEqual(ls.header, [...feed.HISTORY_FIXED, 'T7 03/10', 'T7 10/10', 'Số lần báo đi', 'Discord ID']);
     assert.deepEqual(ls.rows.map((r) => [r[0], r[3], r[4], r[5]]), [
-      ['Người Mới', fx('=IFERROR(VLOOKUP($A{r},ThanhVien!$A:$O,6,FALSE),"")'), '🆕 Chưa vào bang', '🆕 Chưa vào bang'],
-      ['An Game', fx('=IFERROR(VLOOKUP($A{r},ThanhVien!$A:$O,6,FALSE),"")'), '⚠️ Đăng ký nhưng không tham gia', '✅ Đi'],
+      ['Người Mới', fx('=IFERROR(VLOOKUP($A{r},ThanhVien!$A:$P,6,FALSE),"")'), '🆕 Chưa vào bang', '🆕 Chưa vào bang'],
+      ['An Game', fx('=IFERROR(VLOOKUP($A{r},ThanhVien!$A:$P,6,FALSE),"")'), '⚠️ Đăng ký nhưng không tham gia', '✅ Đi'],
       ['', 'Chưa có tên game', '⏳ Không đi', '❌ Vắng'],
     ]);
     assert.deepEqual(ls.rows[1][6], fx('=COUNTIF(E{r}:F{r},"✅*")'));
@@ -417,7 +427,7 @@ describe('feed.buildSheet', () => {
     ];
     const sk = tab(buildSheet(data({ events })), feed.EVENT_TAB);
     assert.deepEqual(sk.rows, [
-      ['Tiệc', '25/10/2026', 'Đang mở', 'An Game', 'An Discord', fx('=IFERROR(VLOOKUP($D{r},ThanhVien!$A:$O,2,FALSE),"")'), '✅ Tham gia', sid(1)],
+      ['Tiệc', '25/10/2026', 'Đang mở', 'An Game', 'An Discord', fx('=IFERROR(VLOOKUP($D{r},ThanhVien!$A:$P,2,FALSE),"")'), '✅ Tham gia', sid(1)],
       ['Tiệc', '25/10/2026', 'Đang mở', '', 'Bình', '', '❌ Không', sid(2)],
       ['Trống', '25/10/2026', 'Đang mở', '', '', '', '(chưa ai trả lời)', ''],
     ]);
@@ -442,6 +452,25 @@ describe('sheetSync.syncNow', () => {
     assert.deepEqual(tv.slice(1).map((r) => [r[0], r[6], r[7]]), [['An', 'An', sid(1)], ['', 'Bình', sid(2)]]);
     assert.equal(typeof tv[1][7], 'string');
     assert.deepEqual(fake.sheets.get('BangChien_TuanNay').rows.slice(1).map((r) => r[3]), ['✅ Đi', '✅ Đi']);
+  });
+  it('ThanhVien: the bot column "ID game" is appended last and the ID is written as a text string (leading zeros, 20 digits)', async () => {
+    assert.equal(feed.MEMBER_HEADER.at(-1), 'ID game');
+    assert.equal(feed.MEMBER_HEADER.indexOf('Ngày quay lại'), feed.MEMBER_HEADER.length - 2, 'appended: earlier columns keep their place');
+    const fake = createFakeSheets();
+    gateway.setClient(fake);
+    const uid = '00123456789012345678';
+    rosterDoc = { importedAt: vn(2026, 10, 20, 12), source: 'x.xlsx', members: [{ name: 'An', rank: 'Bang Chúng', className: 'Tố Vấn', daysInGuild: 30, status: '', gameUid: uid }, { name: 'Bảo', rank: 'Bang Chúng', className: 'Tố Vấn', daysInGuild: 3, status: '' }] };
+    await sheetSync.syncNow(clientOf(people()), GUILD);
+    const tv = fake.sheets.get('ThanhVien').rows;
+    const col = feed.MEMBER_HEADER.indexOf('ID game');
+    assert.equal(tv[0][col], 'ID game');
+    const row = (name) => tv.find((r) => r[0] === name);
+    assert.strictEqual(row('An')[col], uid);
+    assert.equal(row('Bảo')[col], '');
+    const discordOnly = tv.find((r) => r[0] === '' && r[6] === 'Bình');
+    assert.equal(discordOnly.length, feed.MEMBER_HEADER.length, 'every row has the new cell');
+    const write = fake.calls.find((c) => c[0] === 'valuesBatchUpdate' && c[2][0].range === "'ThanhVien'!A1");
+    assert.equal(write[3], 'RAW', 'RAW keeps a digits string as text');
   });
 
   it('an incomplete member list writes nothing (people would look unlinked or vanish) and says so', async () => {

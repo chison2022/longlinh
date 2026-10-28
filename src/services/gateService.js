@@ -3,7 +3,8 @@
 // so two managers pressing ✅ at once cannot both win.
 const db = require('../db');
 const memberStore = require('./members');
-const { nameKey } = require('./gameRosterService');
+const gameRoster = require('./gameRosterService');
+const { nameKey } = gameRoster;
 const { formatDayTime } = require('../utils/time');
 
 const MAX_WELCOME_MEMBER = 4000;
@@ -13,6 +14,7 @@ const MAX_REASON = 500;
 const COOLDOWN_MS = 12 * 3600 * 1000; // after a rejected / cancelled request
 const REQUESTS_PER_HOUR = 3;
 const CARD_FAILED_REASON = 'không gửi được thẻ tới quản lý'; // the member's fault it was not: no cooldown
+const UID_CLASH_REASON = 'ID game bị trùng'; // the member must send again with another ID: no cooldown either
 
 // ---------- texts ----------
 
@@ -59,7 +61,7 @@ const gateAdminChannelOf = (config) => (config && (config.gateAdminChannelId || 
 
 // A join request as the bot reads it: the old document shape (_id, discordId, displayName from the member row, camelCase fields).
 const REQUEST_SQL = `select g.id as "_id", g.guild_id as "guildId", m.discord_id as "discordId", m.display_name as "displayName",
-  g.game_name as "gameName", g.game_name_free as "gameNameFree", g.class_name as "className", g.status, g.decided_by as "decidedBy",
+  g.game_name as "gameName", g.game_name_free as "gameNameFree", g.class_name as "className", g.game_uid as "gameUid", g.status, g.decided_by as "decidedBy",
   g.decided_at as "decidedAt", g.reason, g.admin_channel_id as "adminChannelId", g.admin_message_id as "adminMessageId",
   g.created_at as "createdAt", g.updated_at as "updatedAt"
   from gate_requests g join discord_members m on m.id = g.member_id`;
@@ -91,8 +93,8 @@ const decision = (status, { by, reason, at }) => ({ status, decided_by: by, deci
 function recentDecision(guildId, discordId, { now = Date.now(), cooldownMs = COOLDOWN_MS } = {}) {
   return db.one(
     `${REQUEST_SQL} where g.guild_id = $1 and m.discord_id = $2 and g.status in ('rejected', 'cancelled', 'guest', 'revoked')
-     and g.reason <> $3 and g.decided_at >= $4 order by g.decided_at desc limit 1`,
-    [guildId, discordId, CARD_FAILED_REASON, new Date(now - cooldownMs)]
+     and g.reason <> all($3) and g.decided_at >= $4 order by g.decided_at desc limit 1`,
+    [guildId, discordId, [CARD_FAILED_REASON, UID_CLASH_REASON], new Date(now - cooldownMs)]
   );
 }
 
@@ -113,10 +115,18 @@ function noteRequest(guildId, discordId, now = Date.now()) {
   const key = `${guildId}:${discordId}`;
   recentRequests.set(key, [...liveRequests(key, now), now]);
 }
+// Takes the last count back (a request that never went through: its ID clashed).
+function unnoteRequest(guildId, discordId) {
+  const key = `${guildId}:${discordId}`;
+  const list = recentRequests.get(key) || [];
+  if (list.length > 1) recentRequests.set(key, list.slice(0, -1));
+  else recentRequests.delete(key);
+}
 const resetRequestLimits = () => recentRequests.clear();
 
 // Saves a pending request; a name picked from the roster points at its character. -> { request, created: true } or, when the member
-// already has one pending, { request: <that one>, created: false }.
+// already has one pending, { request: <that one>, created: false } or, when another pending request holds the same game ID,
+// { request: null, created: false, uidClash: <text> }.
 async function createPending(data) {
   try {
     const id = db.newId();
@@ -126,14 +136,19 @@ async function createPending(data) {
         ? null
         : await db.one('select id from game_characters where guild_id = $1 and name_key = $2 and left_at is null', [data.guildId, nameKey(data.gameName) || `#${data.gameName}`]);
       await db.q(
-        `insert into gate_requests (id, guild_id, member_id, character_id, game_name, game_name_free, class_name, status) values ($1, $2, $3, $4, $5, $6, $7, 'pending')`,
-        [id, data.guildId, mid, ch ? ch.id : null, data.gameName, !!data.gameNameFree, data.className || '']
+        `insert into gate_requests (id, guild_id, member_id, character_id, game_name, game_name_free, class_name, game_uid, status) values ($1, $2, $3, $4, $5, $6, $7, $8, 'pending')`,
+        [id, data.guildId, mid, ch ? ch.id : null, data.gameName, !!data.gameNameFree, data.className || '', data.gameUid || null]
       );
     });
     return { request: await db.one(`${REQUEST_SQL} where g.id = $1`, [id]), created: true };
   } catch (err) {
     if (!db.isUniqueViolation(err)) throw err;
     const existing = await findPending(data.guildId, data.discordId);
+    if (!existing && data.gameUid) {
+      const check = await gameRoster.checkGameUid(data.guildId, data.gameUid); // the pending-ID index fired: name who has it
+      // no holder visible: a race with a request that was decided meanwhile - still a friendly answer, never the raw error
+      return { request: null, created: false, uidClash: check.error || 'ID này vừa được người khác dùng để xin vào bang. Gửi lại sau ít giây hoặc kiểm tra ID của bạn.' };
+    }
     if (!existing) throw err; // decided in between: the caller may try again
     return { request: existing, created: false };
   }
@@ -143,6 +158,29 @@ async function createPending(data) {
 function decide(id, status, { by = null, reason = '', at = new Date() } = {}) {
   if (!db.isId(String(id))) return Promise.resolve(null);
   return updateWhere(id, `status = 'pending'`, [], decision(status, { by, reason, at }));
+}
+
+// pending -> `status` AND the applicant's game ID given to its character, in one transaction: an ID that clashes (held by another
+// character, or the character has a different one) decides nothing. `claim` = { guildId, name, uid } or null (an old request without
+// an ID). -> { decided, claim } | { clash: text } | { decided: null } (somebody else decided first; the claim is rolled back)
+async function decideWithUid(id, status, opts, claim) {
+  if (!db.isId(String(id))) return { decided: null };
+  const lost = new Error('lost');
+  try {
+    return await db.tx(async () => {
+      let got = null;
+      if (claim) {
+        got = await gameRoster.claimGameUid(claim.guildId, claim.name, claim.uid);
+        if (got.status === 'clash') return { clash: got.text };
+      }
+      const decided = await decide(id, status, opts);
+      if (!decided) throw lost;
+      return { decided, claim: got };
+    });
+  } catch (err) {
+    if (err === lost) return { decided: null };
+    throw err;
+  }
 }
 
 // Undo a decide() whose follow-up failed (a role could not be changed): back to pending so a retry works.
@@ -180,6 +218,7 @@ module.exports = {
   COOLDOWN_MS,
   REQUESTS_PER_HOUR,
   CARD_FAILED_REASON,
+  UID_CLASH_REASON,
   YOUNG_ACCOUNT_DAYS,
   guildNameOf,
   defaultWelcomeMember,
@@ -191,9 +230,11 @@ module.exports = {
   recentDecision,
   requestBlockedUntil,
   noteRequest,
+  unnoteRequest,
   resetRequestLimits,
   createPending,
   decide,
+  decideWithUid,
   revoke,
   reopen,
   decidePendingOf,

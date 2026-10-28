@@ -208,3 +208,146 @@ describe('removeRegistrations', () => {
     assert.deepEqual(await reg.removeRegistrations('nope', [sid(2)]), []);
   });
 });
+
+describe('in-game character ID (game_uid)', () => {
+  const NOW = new Date('2026-10-20T00:00:00Z');
+  const uidOf = async (name) => (await db.one('select game_uid from game_characters where name = $1', [name])).game_uid;
+
+  it('cleanGameUid: trims, digits only, 5 to 20 of them; empty means none', () => {
+    assert.deepEqual(gr.cleanGameUid('  12345678 '), { uid: '12345678' });
+    assert.deepEqual(gr.cleanGameUid(''), { uid: '' });
+    assert.deepEqual(gr.cleanGameUid(null), { uid: '' });
+    assert.deepEqual(gr.cleanGameUid('00123'), { uid: '00123' }, 'leading zeros kept');
+    for (const bad of ['1234', '1'.repeat(21), '12 345', 'abc12345', '12345a', '١٢٣٤٥٦', '12.345', '-12345']) assert.match(gr.cleanGameUid(bad).error, /chữ số/, bad);
+    assert.equal(gr.cleanGameUid('1'.repeat(20)).uid.length, 20);
+  });
+  it('setGameUid: a manager sets it by name (any spelling), changes it, and removes it with an empty ID', async () => {
+    await save([m('Hắc Phong'), m('An')], T1);
+    assert.deepEqual(await gr.setGameUid(G, ' hac  phong ', '12345678'), { name: 'Hắc Phong', uid: '12345678' });
+    assert.equal(await uidOf('Hắc Phong'), '12345678');
+    assert.equal((await gr.latest(G)).members.find((x) => x.name === 'Hắc Phong').gameUid, '12345678');
+    await gr.setGameUid(G, 'Hắc Phong', '87654321');
+    assert.equal(await uidOf('Hắc Phong'), '87654321');
+    assert.deepEqual(await gr.setGameUid(G, 'Hắc Phong', ''), { name: 'Hắc Phong', uid: null });
+    assert.equal(await uidOf('Hắc Phong'), null);
+    assert.match((await gr.setGameUid(G, 'Không Có', '12345678')).error, /Không tìm thấy nhân vật \*\*Không Có\*\*/);
+    assert.match((await gr.setGameUid(G, 'An', '12x45')).error, /chữ số/);
+  });
+  it('an ID is never shared: the holder is named, a departed holder says so and points at ✏️ Đổi tên; no raw DB error', async () => {
+    await save([m('An'), m('Bình'), m('Chi')], T1);
+    await gr.setGameUid(G, 'An', '11111');
+    const dup = await gr.setGameUid(G, 'Bình', '11111');
+    assert.match(dup.error, /thuộc nhân vật \*\*An\*\*/);
+    assert.doesNotMatch(dup.error, /đã rời bang/);
+    assert.equal(await uidOf('Bình'), null);
+    assert.deepEqual(await gr.setGameUid(G, 'An', '11111'), { name: 'An', uid: '11111' }, 'its own ID again is fine');
+    await save([m('Bình'), m('Chi')], T2); // An leaves, keeps the ID
+    const gone = await gr.setGameUid(G, 'Bình', '11111');
+    assert.match(gone.error, /\*\*An\*\* \(đã rời bang\)/);
+    assert.match(gone.error, /Đổi tên/);
+    assert.equal(await uidOf('Bình'), null);
+    assert.match((await gr.checkGameUid(G, '11111')).error, /đã rời bang/);
+    assert.deepEqual(await gr.checkGameUid(G, '22222'), { uid: '22222' });
+    assert.deepEqual(await gr.checkGameUid(G, ''), { uid: '' });
+    assert.match((await gr.checkGameUid(G, 'zz')).error, /chữ số/);
+    await assert.rejects(db.q(`update game_characters set game_uid = '11111' where name = 'Chi'`), (e) => db.isUniqueViolation(e), 'the index itself refuses it');
+  });
+  it('the same ID may exist in two guilds', async () => {
+    await db.q('insert into guilds (id) values ($1)', ['800000000000000002']);
+    await save([m('An')], T1);
+    await gr.saveImport({ guildId: '800000000000000002', source: 'f.xlsx', members: [m('An')], importedAt: T1 });
+    assert.equal((await gr.setGameUid(G, 'An', '12345')).uid, '12345');
+    assert.equal((await gr.setGameUid('800000000000000002', 'An', '12345')).uid, '12345');
+  });
+  it('claimGameUid (the gate): sets an empty ID, same is fine, a different ID or any other holder (departed too) is a clash that writes nothing', async () => {
+    await save([m('An'), m('Bình'), m('Chi'), m('Dũng')], T1);
+    const first = await gr.claimGameUid(G, 'An', '12345');
+    assert.deepEqual([first.status, first.created], ['set', false]);
+    assert.equal(await uidOf('An'), '12345');
+    assert.equal((await gr.claimGameUid(G, 'An', '12345')).status, 'same');
+    const has = await gr.claimGameUid(G, 'An', '99999');
+    assert.equal(has.status, 'clash');
+    assert.match(has.text, /đã có một ID game khác/);
+    assert.equal(await uidOf('An'), '12345');
+    const taken = await gr.claimGameUid(G, 'Bình', '12345');
+    assert.equal(taken.status, 'clash');
+    assert.match(taken.text, /\*\*An\*\*/);
+    assert.equal(await uidOf('Bình'), null);
+    await save([m('Bình'), m('Chi'), m('Dũng')], T2); // An left
+    const gone = await gr.claimGameUid(G, 'Chi', '12345');
+    assert.equal(gone.status, 'clash');
+    assert.match(gone.text, /đã rời bang/);
+  });
+  it('claimGameUid: a name nobody has becomes a typed character that holds the ID (and releaseGameUid removes it again); a typed name that is a DEPARTED character lands on that very row, like the link does', async () => {
+    await save([m('Cũ'), m('An')], T1);
+    await save([m('An')], T2); // Cũ left
+    const departed = await gr.claimGameUid(G, 'cũ', '22222');
+    assert.deepEqual([departed.status, departed.created], ['set', false]);
+    assert.equal(await uidOf('Cũ'), '22222', 'the departed row, not a second one');
+    await gr.setMappings(G, [{ discordId: sid(1), gameName: 'Cũ' }]);
+    assert.equal((await db.one(`select count(*) as n from game_characters where name_key = $1`, [gr.nameKey('Cũ')])).n, 1, 'the link used the same row');
+    assert.equal(await uidOf('Cũ'), '22222');
+    const typed = await gr.claimGameUid(G, 'Người Lạ', '33333');
+    assert.deepEqual([typed.status, typed.created], ['set', true]);
+    assert.equal(await uidOf('Người Lạ'), '33333');
+    await gr.releaseGameUid(G, typed.characterId);
+    assert.equal((await db.one(`select count(*) as n from game_characters where name = 'Người Lạ'`)).n, 0, 'the typed row the claim made is gone');
+    await gr.releaseGameUid(G, departed.characterId);
+    assert.equal(await uidOf('Cũ'), null, 'a linked row only loses the ID');
+  });
+  it('checkGameUid: the picked character already carries a different ID -> refused up front', async () => {
+    await save([m('An')], T1);
+    await gr.setGameUid(G, 'An', '12345');
+    assert.match((await gr.checkGameUid(G, '99999', { exceptName: 'An' })).error, /đã có một ID game khác/);
+    assert.deepEqual(await gr.checkGameUid(G, '99999'), { uid: '99999' }, 'without a chosen character nothing to compare');
+    await save([m('An'), m('Bình')], T2);
+    assert.deepEqual(await gr.checkGameUid(G, '99999', { exceptName: 'Bình' }), { uid: '99999' }, 'a character with no ID takes any free one');
+  });
+  it("checkGameUid: the picked character's own ID is accepted, another character's is not; a pending request reserves its ID", async () => {
+    await save([m('An'), m('Bình')], T1);
+    await gr.setGameUid(G, 'An', '12345');
+    assert.match((await gr.checkGameUid(G, '12345')).error, /\*\*An\*\*/);
+    assert.deepEqual(await gr.checkGameUid(G, '12345', { exceptName: 'an' }), { uid: '12345' });
+    assert.match((await gr.checkGameUid(G, '12345', { exceptName: 'Bình' })).error, /\*\*An\*\*/);
+    await db.q(`insert into discord_members (guild_id, discord_id, display_name) values ($1, $2, 'X')`, [G, sid(1)]);
+    const mid = (await db.one('select id from discord_members where discord_id = $1', [sid(1)])).id;
+    await db.q(`insert into gate_requests (id, guild_id, member_id, game_name, game_uid, status) values ($1, $2, $3, 'Q', '77777', 'pending')`, [db.newId(), G, mid]);
+    assert.match((await gr.checkGameUid(G, '77777')).error, /người khác dùng để xin vào bang/);
+    assert.deepEqual(await gr.checkGameUid(G, '88888'), { uid: '88888' });
+  });
+  it('renameCharacter: the ID moves from the old row to the surviving one (the new row held none); the unique index is never hit', async () => {
+    await save([m('Cũ', { daysInGuild: 40 }), m('An')], T1);
+    await gr.setGameUid(G, 'Cũ', '12345678');
+    await save([m('Mới', { daysInGuild: 44 }), m('An')], T2);
+    const { left, fresh } = await gr.renameChoices(G, NOW);
+    const out = await gr.renameCharacter(G, left.find((c) => c.name === 'Cũ').id, fresh.find((c) => c.name === 'Mới').id);
+    assert.deepEqual(out, { from: 'Cũ', to: 'Mới' });
+    assert.equal(await uidOf('Mới'), '12345678');
+    assert.equal((await db.one(`select count(*) as n from game_characters where game_uid = '12345678'`)).n, 1);
+  });
+  it('renameCharacter: two different IDs - the old one is kept and the manager is told what was dropped', async () => {
+    await save([m('Cũ', { daysInGuild: 40 }), m('An')], T1);
+    await gr.setGameUid(G, 'Cũ', '11111');
+    await save([m('Mới', { daysInGuild: 44 }), m('An')], T2);
+    await gr.setGameUid(G, 'Mới', '22222');
+    const { left, fresh } = await gr.renameChoices(G, NOW);
+    const out = await gr.renameCharacter(G, left.find((c) => c.name === 'Cũ').id, fresh.find((c) => c.name === 'Mới').id);
+    assert.equal(await uidOf('Mới'), '11111');
+    assert.match(out.note, /giữ \*\*11111\*\*.*bỏ \*\*22222\*\*/);
+  });
+  it("renameCharacter: no ID on the old row keeps the new row's; the old row's wins when both have one", async () => {
+    await save([m('Cũ', { daysInGuild: 40 }), m('Cũ2', { daysInGuild: 40 }), m('An')], T1);
+    await save([m('Mới', { daysInGuild: 44 }), m('Mới2', { daysInGuild: 44 }), m('An')], T2);
+    await gr.setGameUid(G, 'Mới', '31111');
+    await db.q(`update game_characters set game_uid = '42222' where name = 'Cũ2'`); // departed: the manager form only finds active ones
+    await gr.setGameUid(G, 'Mới2', '43333');
+    const { left, fresh } = await gr.renameChoices(G, NOW);
+    const L = (n) => left.find((c) => c.name === n).id;
+    const F = (n) => fresh.find((c) => c.name === n).id;
+    assert.ok(!(await gr.renameCharacter(G, L('Cũ'), F('Mới'))).error);
+    assert.equal(await uidOf('Mới'), '31111');
+    assert.ok(!(await gr.renameCharacter(G, L('Cũ2'), F('Mới2'))).error);
+    assert.equal(await uidOf('Mới2'), '42222', "the old row's ID");
+    assert.equal((await db.one(`select count(*) as n from game_characters where game_uid is not null`)).n, 2);
+  });
+});

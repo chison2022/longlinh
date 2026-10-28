@@ -69,12 +69,15 @@ create table game_characters (
   left_at         timestamptz,                  -- set when a newer import no longer lists it; null = still in the guild
   returned_at     timestamptz,                  -- when an import listed it again after it had left
   old_names       text[] not null default '{}', -- earlier names, oldest first (✏️ Đổi tên confirmed by a manager)
+  game_uid        text,                         -- in-game character ID, digits only (5-20); null = unknown
   created_at      timestamptz not null default now(),
   updated_at      timestamptz not null default now(),
   unique (guild_id, id)
 );
 -- a departed character keeps its row, so a newcomer may take the same name
 create unique index game_characters_active_name on game_characters (guild_id, name_key) where left_at is null;
+-- an in-game ID is never shared, a departed character included (a rename moves the ID to the new row)
+create unique index game_characters_uid on game_characters (guild_id, game_uid) where game_uid is not null;
 
 -- 1 character <-> 1 Discord account (clone accounts are simply not linked).
 -- Automatic name matches are not stored: they are worked out on read, as today.
@@ -192,6 +195,7 @@ create table gate_requests (
   game_name         text not null,              -- the name as asked (kept even when character_id is set)
   game_name_free    boolean not null default false,
   class_name        text not null default '',
+  game_uid          text,                       -- optional in-game ID typed by the applicant
   status            text not null default 'pending' check (status in ('pending', 'approved', 'rejected', 'guest', 'cancelled', 'revoked')),
   decided_by        text,
   decided_at        timestamptz,
@@ -203,6 +207,8 @@ create table gate_requests (
   foreign key (guild_id, member_id) references discord_members (guild_id, id) on delete cascade
 );
 create unique index gate_requests_one_pending on gate_requests (guild_id, member_id) where status = 'pending';
+-- a pending request reserves its in-game ID: two applicants cannot ask with the same one
+create unique index gate_requests_pending_uid on gate_requests (guild_id, game_uid) where status = 'pending' and game_uid is not null;
 create index gate_requests_guild_status on gate_requests (guild_id, status, created_at desc);
 
 -- ---------------------------------------------------------------- mailbox (kept although empty)

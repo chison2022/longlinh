@@ -164,6 +164,17 @@ function buildGameAddModal(classes) {
     );
 }
 
+// 🆔 ID game (adm:gameuidModal): a manager sets the in-game ID of a character; empty ID = remove it.
+function buildGameUidModal() {
+  return new ModalBuilder()
+    .setCustomId('adm:gameuidModal')
+    .setTitle('ID game của nhân vật')
+    .addLabelComponents(
+      textField('name', 'Tên nhân vật', { maxLength: 32, description: 'Nhân vật đang trong danh sách game.' }),
+      textField('uid', 'ID game (để trống = xoá)', { required: false, maxLength: 20, description: 'Chỉ chữ số, 5 đến 20 số.' })
+    );
+}
+
 // 📄 Google Doc of the events (setup:evdocModal): the link of a Doc the managers shared (Editor) with the bot; empty = disconnect.
 function buildEventDocModal(config, botEmail) {
   return new ModalBuilder()
@@ -190,4 +201,4 @@ function formSelect(id, label, options, current, placeholder) {
   return new LabelBuilder().setLabel(label).setStringSelectMenuComponent(select);
 }
 
-module.exports = { buildOffWarnModal, buildEventModal, buildExtendModal, buildPublishModal, buildSheetModal, buildSettingsModal, buildCreateModal, buildGameUploadModal, buildGameAddModal, buildEventDocModal };
+module.exports = { buildOffWarnModal, buildEventModal, buildExtendModal, buildPublishModal, buildSheetModal, buildSettingsModal, buildCreateModal, buildGameUploadModal, buildGameAddModal, buildGameUidModal, buildEventDocModal };

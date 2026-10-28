@@ -131,6 +131,10 @@ const MIGRATIONS = [
   'alter table game_characters drop column if exists power', // Lực chiến dropped (2026-10-22)
   'alter table game_characters add column if not exists returned_at timestamptz', // roster status (2026-10-22)
   "alter table game_characters add column if not exists old_names text[] not null default '{}'",
+  'alter table game_characters add column if not exists game_uid text', // in-game character ID (2026-10-28)
+  'alter table gate_requests add column if not exists game_uid text',
+  "create unique index if not exists gate_requests_pending_uid on gate_requests (guild_id, game_uid) where status = 'pending' and game_uid is not null",
+  'create unique index if not exists game_characters_uid on game_characters (guild_id, game_uid) where game_uid is not null',
 ];
 
 async function ensureSchema() {

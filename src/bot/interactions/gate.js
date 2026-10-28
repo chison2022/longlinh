@@ -211,6 +211,16 @@ async function onSend(interaction, parts) {
   const adminChannelId = gateService.gateAdminChannelOf(config);
   if (!adminChannelId) return interaction.editReply(ui.ephemeral('⚠️ Quản lý chưa chọn kênh nhận yêu cầu vào bang, hãy báo quản lý.'));
 
+  // The in-game ID is required: a missing, bad or taken one sends the member back to the summary to retry (nothing is saved yet).
+  // The chosen character's own ID (a manager may have typed it already) is not a clash.
+  const retryUid = (text) => {
+    const instant = config.gateAutoApprove !== false && Boolean(choice.entry) && !choice.free;
+    return interaction.editReply(ui.buildSummary({ token: choice.token, classIndex, name: choice.name, free: choice.free, className, styles: stylesOf(interaction.guild, config), fromRoster: rosterClassIndex(config, choice) >= 0, instant, note: `⚠️ ${text}\nBấm Gửi yêu cầu để nhập lại ID.` }));
+  };
+  const uidCheck = await gameRoster.checkGameUid(interaction.guildId, interaction.fields.getTextInputValue('uid'), { exceptName: choice.name });
+  if (!uidCheck.error && !uidCheck.uid) uidCheck.error = 'Cần nhập ID nhân vật trong game để gửi yêu cầu.';
+  if (uidCheck.error) return retryUid(uidCheck.error);
+
   const { avail, holder } = await holderCheck(interaction, roster, choice, { keepMine: true });
   if (!avail.complete) return interaction.editReply(await pickerView(interaction, { note: LOADING, roster }));
   if (holder) {
@@ -220,15 +230,17 @@ async function onSend(interaction, parts) {
 
   const member = await memberOf(interaction);
   const canonical = canonicalClass(className, config.classes);
-  const { request, created } = await gateService.createPending({
+  const { request, created, uidClash } = await gateService.createPending({
     guildId: interaction.guildId,
     discordId: interaction.user.id,
     displayName: nameOf(interaction),
     gameName: choice.name,
     gameNameFree: choice.free,
     className: canonical,
+    gameUid: uidCheck.uid,
     adminChannelId,
   });
+  if (uidClash) return retryUid(uidClash); // another applicant reserved the same ID a moment ago
   if (!created) return interaction.editReply(ui.buildPendingNotice(request)); // parallel click: one pending request only
   gateService.noteRequest(interaction.guildId, interaction.user.id);
 
@@ -249,6 +261,13 @@ async function onSend(interaction, parts) {
     const r = await grantMembership(interaction, request, config, 'auto');
     if (r.notes) return autoApproved(interaction, { request, adminChannelId, texts: ui.approvalTexts(cardInfo), notes: r.notes, name: choice.name, className: canonical });
     if (r.lost) return interaction.editReply(ui.buildPendingNotice(request));
+    if (r.uidClash) {
+      // nothing was approved: the request is cancelled without a cooldown and without using up the hourly limit, the member re-enters the ID
+      await gateService.decide(request._id, 'cancelled', { by: interaction.user.id, reason: gateService.UID_CLASH_REASON });
+      gateService.unnoteRequest(interaction.guildId, interaction.user.id);
+      logEvent('gate', 'uid_clash', { ...ixCtx(interaction), rid: String(request._id), auto: true, lvl: 'warn' });
+      return retryUid(r.uidClash);
+    }
     if (r.alert) card = ui.buildAlertCard({ texts: ui.approvalTexts(cardInfo), requestId: String(request._id), alert: `Bot chưa tự duyệt được:\n${r.alert}` });
   }
   try {
@@ -364,7 +383,9 @@ async function dmMember(member, text) {
 
 // Grants the membership of a pending request: name still free, roles manageable, ONE winner, roles, link, class, DM.
 // Shared by the manager's ✅ and the bot's auto-approval on send (by = 'auto'). Nothing is changed when it returns { alert }.
-// -> { alert } (still pending) | { gone: true } (member left) | { lost: true } (somebody else decided) | { notes, classRole }
+// The applicant's game ID is given to the character BEFORE anything is decided or any role is given, in one transaction with the status
+// change: a clash (held by another character, even a departed one, or a different ID already on this one) approves nothing.
+// -> { alert } (still pending) | { uidClash: text } (still pending, the caller cancels it) | { gone: true } (member left) | { lost: true } (somebody else decided) | { notes, classRole }
 async function grantMembership(interaction, request, config, by) {
   const guild = interaction.guild;
   if (!config.memberRoleId) return { alert: '• Chưa chọn role thành viên trong /setup.' };
@@ -395,15 +416,32 @@ async function grantMembership(interaction, request, config, by) {
   }
 
   // 3. one winner
-  const decided = await gateService.decide(request._id, 'approved', { by });
-  if (!decided) return { lost: true };
+  const claimArgs = request.gameUid ? { guildId: interaction.guildId, name: request.gameName, uid: request.gameUid } : null; // old requests have no ID
+  const won = await gateService.decideWithUid(request._id, 'approved', { by }, claimArgs);
+  if (won.clash) return { uidClash: won.clash };
+  if (!won.decided) return { lost: true };
+  const undoUid = async () => {
+    if (!won.claim || won.claim.status !== 'set') return; // only an ID this grant set is taken back
+    try {
+      await gameRoster.releaseGameUid(interaction.guildId, won.claim.characterId);
+    } catch (err) {
+      console.error('[gate] cannot release the game ID:', err.message);
+    }
+  };
   const changed = await applyRoles(member, plan, by === 'auto' ? 'Gate: bot tự duyệt (tên có trong danh sách game)' : `Gate: duyệt bởi ${by}`);
   if (changed.addError) {
     roleFailed(interaction, { kind: 'add', role: plan.map((e) => e.id).join(','), action: 'approve', err: changed.addError });
     await gateService.reopen(request._id, 'approved');
+    await undoUid();
     return { alert: `• Discord từ chối khi gán role (${rolesText(plan)}): ${changed.addError.message}` };
   }
   const notes = [];
+  // the link is skipped below: the ID must not stay on a character the member is not linked to
+  const unlinkedUid = async () => {
+    if (!won.claim || won.claim.status !== 'set') return;
+    await undoUid();
+    notes.push('⚠️ ID game chưa lưu vì chưa liên kết nhân vật: sau khi ghép tên thì nhập ở 🎮 Thành viên game → 🆔 ID game.');
+  };
   if (classSkipped) notes.push(`⚠️ Role phái **${ui.safe(plainClass(request.className) || request.className, 40)}** <@&${classSkipped.id}> có quyền quản lý hoặc là role quản lý nên bot KHÔNG gán: gán tay nếu đúng ý.`);
   else if (!classRole) notes.push(`ℹ️ Không có role nào tên phái **${ui.safe(plainClass(request.className) || request.className, 40)}** nên chưa gán role phái.`);
   const strangerNote = await dropStranger(member, config);
@@ -417,15 +455,18 @@ async function grantMembership(interaction, request, config, by) {
     const again = await holderCheck(interaction, roster2, { name: request.gameName, entry: entry2 }, { id: request.discordId, name: member.displayName, username: member.user && member.user.username, keepMine: true });
     if (!again.avail.complete) {
       notes.push('⚠️ Chưa kiểm tra lại được tên game (bot đang tải danh sách thành viên): chưa liên kết, ghép tay trong 🔗 Ghép tên.');
+      await unlinkedUid();
     } else if (again.holder) {
       logEvent('gate', 'link_skipped', { ...ixCtx(interaction), rid: String(request._id), reason: again.holder.source });
       notes.push('⚠️ Tên đã bị người khác liên kết, ghép tay trong 🔗 Ghép tên.');
+      await unlinkedUid();
     } else {
       await gameRoster.setMappings(interaction.guildId, [{ discordId: request.discordId, gameName: entry2 ? entry2.name : request.gameName, displayName: member.displayName }]);
     }
   } catch (err) {
     console.error('[gate] cannot save the link:', err.message);
     notes.push('⚠️ Chưa lưu được liên kết tên game (có người vừa nhận tên này): ghép tay trong 🔗 Ghép tên.');
+    await unlinkedUid();
   }
   try {
     await saveMemberClass(interaction.guildId, request.discordId, member.displayName, canonicalClass(request.className, config.classes));
@@ -453,6 +494,28 @@ async function grantMembership(interaction, request, config, by) {
   return { notes, classRole };
 }
 
+// ✅ on a request whose ID clashes: nothing is approved, the request is cancelled (no cooldown) and the member is told to apply again.
+async function uidClashed(interaction, request, config, clash) {
+  const decided = await gateService.decide(request._id, 'cancelled', { by: interaction.user.id, reason: gateService.UID_CLASH_REASON });
+  if (!decided) return interaction.followUp(eph('Yêu cầu này vừa được quản lý khác xử lý.'));
+  gateService.unnoteRequest(interaction.guildId, request.discordId); // like the auto path: a clash does not use up the member's hourly limit
+  logEvent('gate', 'uid_clash', { ...ixCtx(interaction), rid: String(request._id), auto: false, lvl: 'warn' });
+  const notes = [];
+  const member = await fetchMember(interaction.guild, request.discordId);
+  if (member) {
+    const told = `Yêu cầu vào bang của bạn chưa được duyệt: ID game **${request.gameUid}** bị trùng. ${clash}\nHãy bấm ⚔️ Thành viên bang ở kênh cổng vào và gửi lại với ID đúng.`;
+    const dm = await dmMember(member, told);
+    if (dm !== true) {
+      logEvent('gate', 'dm_failed', { ...ixCtx(interaction), rid: String(request._id), kind: 'uid_clash', err: dm });
+      notes.push('ℹ️ Không nhắn riêng được, bot đã báo trong kênh cổng vào.');
+      await publicLine(interaction, config, request.discordId, `⚠️ <@${request.discordId}> ID game không đúng/bị trùng nên yêu cầu chưa được duyệt. Hãy gửi lại yêu cầu ở đây với ID đúng.`);
+    }
+  } else {
+    notes.push('ℹ️ Người này đã rời server.');
+  }
+  return interaction.editReply(ui.buildDecidedCard({ texts: messageTexts(interaction.message), kind: 'cancelled', text: `ID game **${request.gameUid}** bị trùng, không duyệt: ${clash} Người xin vào cần gửi lại với ID đúng.`, notes }));
+}
+
 async function onApprove(interaction, id) {
   const request = await loadPending(interaction, id);
   if (!request) return undefined;
@@ -461,6 +524,7 @@ async function onApprove(interaction, id) {
   if (r.alert) return alertCard(interaction, request, r.alert);
   if (r.gone) return memberGone(interaction, request);
   if (r.lost) return interaction.followUp(eph('Yêu cầu này vừa được quản lý khác xử lý.'));
+  if (r.uidClash) return uidClashed(interaction, request, config, r.uidClash);
   return interaction.editReply(ui.buildDecidedCard({ texts: messageTexts(interaction.message), kind: 'approved', by: interaction.user.id, notes: r.notes }));
 }
 
@@ -512,11 +576,11 @@ async function onRevoke(interaction, id) {
 }
 
 // DM closed: one short line in the gate channel that pings that user and nobody else.
-async function publicLine(interaction, config, userId) {
+async function publicLine(interaction, config, userId, text = null) {
   if (!config.gateChannelId) return;
   try {
     const channel = await interaction.client.channels.fetch(config.gateChannelId);
-    await channel.send({ content: `✅ <@${userId}> đã được duyệt vào bang. Kiểm tra các kênh mới nhé!`, allowedMentions: { users: [userId] } });
+    await channel.send({ content: text || `✅ <@${userId}> đã được duyệt vào bang. Kiểm tra các kênh mới nhé!`, allowedMentions: { users: [userId] } });
   } catch (err) {
     console.warn('[gate] cannot post the public line:', err.message);
   }
@@ -599,8 +663,11 @@ async function handle(interaction, parts) {
     case 'chc':
       await interaction.deferUpdate();
       return onChangeClass(interaction, parts);
-    case 'send':
-      await interaction.deferUpdate();
+    case 'send': // the button opens the optional-ID form; its submit (sendModal) is the real send
+      return interaction.showModal(ui.sendModal(parts.slice(2, -1).join(':'), parts[parts.length - 1]));
+    case 'sendModal':
+      if (fromMessage(interaction)) await interaction.deferUpdate();
+      else await interaction.deferReply(eph1);
       return onSend(interaction, parts);
     case 'ok':
     case 'no':

@@ -57,9 +57,10 @@ function merge({ header, rows, keyOf, manual = [], current = [], before = null, 
   const fresh = taken || (epoch !== null && befEpoch !== String(epoch)); // edits of an earlier epoch do not carry over
   const pastBot = new Set((twinHeader || []).filter((h) => h && !h.startsWith(EPOCH))); // columns the bot wrote last time
   const curNames = (current[0] || []).map((h, i) => text(h) || `\u0000${i}`); // a column without header text is carried by position
-  // a bot column whose header somebody retyped is still that column (found at its own position)
+  // a bot column whose header somebody retyped is still that column (found at its own position). Only a column the bot wrote last time
+  // can have been retyped: a bot column that is NEW (appended since the last mirror) never takes over a column somebody added there.
   header.forEach((h, j) => {
-    if (!curNames.includes(h) && j < curNames.length && !header.includes(curNames[j]) && !pastBot.has(curNames[j])) curNames[j] = h;
+    if ((taken || pastBot.has(h)) && !curNames.includes(h) && j < curNames.length && !header.includes(curNames[j]) && !pastBot.has(curNames[j])) curNames[j] = h;
   });
   const hasData = (i) => current.slice(1).some((r) => r && !isEmpty(r[i]));
   const extra = taken ? [] : curNames.filter((name, i) => !header.includes(name) && !pastBot.has(name) && (!name.startsWith('\u0000') || hasData(i)));

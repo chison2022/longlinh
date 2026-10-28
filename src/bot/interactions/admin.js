@@ -466,7 +466,7 @@ async function onSheetNow(interaction, config) {
 
 // adm:create | adm:createModal | adm:lock | adm:settings | adm:settingsModal
 // | adm:unreg[:r] | adm:unregping:<eid>[:g] | adm:unregok:<eid>[:g] | adm:move:<eid>
-// | adm:sheet | adm:sheetedit | adm:sheetnow | adm:game | adm:gamexlsx | adm:gameup | adm:gameupModal | adm:gameadd | adm:gameaddModal | adm:gmap[:r|:g] | adm:gmapp:<page> | adm:gmapm:<index>:<page>:<ver> | adm:gmaps:<index>:<ver> | adm:gmapsug:<ver> | adm:gmapg:<page>:<ver> | adm:gmapu:<index>:<ver> | adm:gmapdel (see ./gameMap)
+// | adm:sheet | adm:sheetedit | adm:sheetnow | adm:game | adm:gamexlsx | adm:gameup | adm:gameupModal | adm:gameadd | adm:gameaddModal | adm:gameuid | adm:gameuidModal | adm:gmap[:r|:g] | adm:gmapp:<page> | adm:gmapm:<index>:<page>:<ver> | adm:gmaps:<index>:<ver> | adm:gmapsug:<ver> | adm:gmapg:<page>:<ver> | adm:gmapu:<index>:<ver> | adm:gmapdel (see ./gameMap)
 // | adm:depok:<rosterId> | adm:depunlink:<rosterId> (the "left the game, still on Discord" notice, see ./depart)
 // adm:offok:<rosterId> - ✅ Đã xử lý on the "off quá N ngày" card (admin-gated in handle): the card turns green with who handled it.
 async function onOffDone(interaction, rosterId) {
@@ -478,7 +478,7 @@ async function onOffDone(interaction, rosterId) {
 
 async function handle(interaction, parts) {
   const action = parts[1];
-  const opensModal = action === 'create' || action === 'settings' || action === 'offcfg' || action === 'gameup' || action === 'gameadd' || action === 'sheetedit';
+  const opensModal = action === 'create' || action === 'settings' || action === 'offcfg' || action === 'gameup' || action === 'gameadd' || action === 'gameuid' || action === 'sheetedit';
   // Buttons inside the ephemeral unreg list edit it in place; everything else opens a new ephemeral reply.
   const inPlace = action === 'grenpair' || action === 'grenold' || action === 'grennew' || action === 'grenok' || (action === 'gren' && parts[2] === 'r') || action === 'sheetnow' || action === 'gmapsug' || action === 'gmapg' || action === 'gmapu' || action === 'gmapdel' || action === 'gmapp' || action === 'gmapm' || action === 'gmaps' || (action === 'gmap' && (parts[2] === 'r' || parts[2] === 'g')) || action === 'unregping' || action === 'unregok' || action === 'move' || action === 'depok' || action === 'offok' || (action === 'unreg' && parts[2] === 'r');
   if (inPlace) await interaction.deferUpdate();
@@ -535,6 +535,10 @@ async function handle(interaction, parts) {
       return gameRoster.onAdd(interaction, config);
     case 'gameaddModal':
       return gameRoster.onAddSubmit(interaction, config);
+    case 'gameuid':
+      return gameRoster.onUid(interaction);
+    case 'gameuidModal':
+      return gameRoster.onUidSubmit(interaction, config);
     case 'gmap':
       return parts[2] === 'g' ? gameRoster.onBack(interaction, config) : gameMap.handle(interaction, parts);
     case 'gmapp':

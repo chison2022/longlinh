@@ -21,7 +21,7 @@ const OLD_TABS = ['LongLinh_DangKy', 'LongLinh_GameRoster', 'LongLinh_DanhBa', '
 const tabsText = () => `${MEMBER_TAB}, ${WEEK_TAB}, ${HISTORY_TAB}; khi bang có sự kiện thì thêm ${EVENT_TAB}`;
 
 // Columns are only ever APPENDED: the lookups below (and the managers' own formulas) count them.
-const MEMBER_HEADER = ['Tên game', 'Phái', 'Chức vụ', 'Ngày trong bang', 'Online lần cuối', 'Trạng thái', 'Tên Discord', 'Discord ID', 'Liên kết', 'Trong server', 'Vai trò', 'Tuyến Khiên', 'Ghi chú', 'Tên cũ', 'Ngày quay lại'];
+const MEMBER_HEADER = ['Tên game', 'Phái', 'Chức vụ', 'Ngày trong bang', 'Online lần cuối', 'Trạng thái', 'Tên Discord', 'Discord ID', 'Liên kết', 'Trong server', 'Vai trò', 'Tuyến Khiên', 'Ghi chú', 'Tên cũ', 'Ngày quay lại', 'ID game'];
 const MEMBER_MANUAL = ['Ghi chú']; // the managers' column: the bot never writes it
 const COL = Object.fromEntries(MEMBER_HEADER.map((h, i) => [h, i + 1]));
 const LAST_COL = columnLetter(MEMBER_HEADER.length);
@@ -136,12 +136,13 @@ function buildSheet(data, { sep = ',' } = {}) {
       '',
       (g.oldNames || []).join(', '),
       g.returnedAt ? day(g.returnedAt) : '',
+      g.gameUid || '', // a string: RAW keeps it text (leading zeros, no 1.2E+10)
     ];
   });
   const discordOnly = infos.filter((i) => !linkedIds.has(i.id) && counted(i.id)).sort((a, b) => a.name.localeCompare(b.name, 'vi'));
   for (const i of discordOnly) {
     const db = dbById.get(i.id);
-    memberRows.push(['', '', '', '', '', STATUS.discordOnly, i.name, i.id, 'Chưa liên kết', 'Có', roleOf(db), db && db.tuyenKhien ? 'Có' : '', '', '', '']);
+    memberRows.push(['', '', '', '', '', STATUS.discordOnly, i.name, i.id, 'Chưa liên kết', 'Có', roleOf(db), db && db.tuyenKhien ? 'Có' : '', '', '', '', '']);
   }
   const shown = (id) => linkedIds.has(id) || counted(id); // may a registration / answer of this person be written
 
