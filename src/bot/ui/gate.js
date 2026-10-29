@@ -3,6 +3,7 @@
 //  member steps : gate:pick:<page>:<ver> (select) | gate:p:<page>:<ver> (◀ ▶) | gate:free (modal gate:freeModal) | gate:cls:<token> (class select)
 //                 | gate:send:<token>:<classIndex> (opens the ID modal gate:sendModal:<token>:<classIndex>, the real send) | gate:back
 //  approval card: gate:ok:<id> | gate:no:<id> (modal gate:noModal:<id>)      (admin-gated)
+//  guest (only while config.guestRoleId is set; self-serve, nobody approves): gate:gst (panel button) -> confirm step: gate:gyes | gate:gback
 //  auto-approved card (a roster name): gate:rv:<id> (modal gate:rvModal:<id>) = take the membership back      (admin-gated)
 // <token> = the chosen character: `r<position in the roster>-<roster version>` or `f-<typed name>`.
 const { ActionRowBuilder, ButtonBuilder, ButtonStyle, ContainerBuilder, StringSelectMenuBuilder, ModalBuilder, LabelBuilder, TextInputBuilder, TextInputStyle, escapeMarkdown } = require('discord.js');
@@ -28,6 +29,9 @@ const LABELS = {
   no: '❌ Từ chối',
   revoke: '↩️ Thu hồi',
   free: GN.free,
+  guest: '🤝 Khách',
+  guestYes: '✅ Vào làm khách',
+  guestBack: '↩ Quay lại',
 };
 
 const button = (id, label, style = ButtonStyle.Secondary, disabled = false) => new ButtonBuilder().setCustomId(id).setLabel(truncate(label, 80)).setStyle(style).setDisabled(disabled);
@@ -39,12 +43,16 @@ const safe = (s, max = 60) => escapeMarkdown(truncate(String(s || ''), max)).rep
 // ---------- the public panel ----------
 
 // autoApprove: a name from the game roster gets in at once; else every request waits for a manager.
-function buildGatePanel({ guildName, autoApprove = true }) {
+// guest: the 🤝 Khách button next to the member one (only while a guest role is configured).
+function buildGatePanel({ guildName, autoApprove = true, guest = false }) {
+  const buttons = [button('gate:member', `${LABELS.member} ${guildName}`, ButtonStyle.Primary)];
+  if (guest) buttons.push(button('gate:gst', LABELS.guest, ButtonStyle.Secondary));
   const container = new ContainerBuilder()
     .setAccentColor(BLUE)
     .addTextDisplayComponents(textDisplay(`### 👋 Chào mừng đến ${truncate(guildName, 100)}!\nBấm nút bên dưới để xin vào bang.`))
-    .addActionRowComponents(new ActionRowBuilder().addComponents(button('gate:member', `${LABELS.member} ${guildName}`, ButtonStyle.Primary)))
+    .addActionRowComponents(new ActionRowBuilder().addComponents(...buttons))
     .addTextDisplayComponents(textDisplay(autoApprove ? '-# Chọn đúng nhân vật có trong danh sách game là vào bang ngay; tên không có trong danh sách thì chờ quản lý duyệt.' : '-# Thành viên bang cần quản lý duyệt trước khi thấy các kênh của bang.'));
+  if (guest) container.addTextDisplayComponents(textDisplay('-# Không chơi trong bang (bạn bè, khách)? Bấm Khách để vào server ngay, không cần duyệt.'));
   return v2Payload([container]);
 }
 
@@ -147,6 +155,16 @@ function buildPendingNotice(request) {
   return ephemeral(lines.join('\n'));
 }
 
+// ---------- the guest path (self-serve) ----------
+
+// Confirm step of 🤝 Khách (ephemeral): the role is given only after ✅ Vào làm khách.
+function buildGuestConfirm() {
+  return ephemeral(
+    'Bạn sẽ vào server với vai trò **khách** (không phải thành viên bang). Thành viên bang thì bấm ⚔️ Thành viên bang.',
+    [new ActionRowBuilder().addComponents(button('gate:gyes', LABELS.guestYes, ButtonStyle.Success), button('gate:gback', LABELS.guestBack))]
+  );
+}
+
 // ---------- the approval card (admin channel) ----------
 
 const ALERT_PREFIX = '🔔 Lần xử lý gần nhất: ';
@@ -184,6 +202,14 @@ function approvalTexts({ request, member, entry = null, classText, warnings = []
   const out = [main];
   if (warnings.length) out.push(warnings.join('\n'));
   return out;
+}
+
+// The info card managers get when somebody took the guest role themselves (no buttons: nothing to decide).
+// member: { id, displayName, createdAt: Date, joinedAt: Date|null }
+function buildGuestJoinedCard({ member, warnings = [] }) {
+  const who = [`Discord: **${safe(member.displayName, 40)}**`, `tài khoản tạo ${discordTs(member.createdAt, 'R')}`];
+  if (member.joinedAt) who.push(`vào server ${discordTs(member.joinedAt, 'R')}`);
+  return cardPayload({ texts: [`🤝 <@${member.id}> đã tự vào làm khách (${who.join(', ')})`, ...(warnings.length ? [warnings.join('\n')] : [])], accent: GREEN });
 }
 
 function buildApprovalCard(info) {
@@ -267,6 +293,8 @@ module.exports = {
   buildPendingNotice,
   approvalTexts,
   buildApprovalCard,
+  buildGuestConfirm,
+  buildGuestJoinedCard,
   buildAlertCard,
   buildDecidedCard,
   buildAutoApprovedCard,

@@ -3,7 +3,7 @@
 const db = require('../db');
 const memberStore = require('./members');
 const defaults = require('../../config/defaults');
-const { HOUR, parseTime, parseLocalDateTime, parseLocalDateTimeNear, formatLocalDateTime, toLocalParts, fromLocal } = require('../utils/time');
+const { HOUR, DAY, DAY_NAMES, parseTime, parseLocalDateTime, parseLocalDateTimeNear, formatLocalDateTime, toLocalParts, fromLocal } = require('../utils/time');
 
 const MINUTE = 60 * 1000;
 const TITLE_MAX = 100;
@@ -76,10 +76,8 @@ function parsePeopleField(text) {
   return { min, max };
 }
 
-// The create / edit modal values ({ title, category, description, time, people }) -> { value: { title, category, description, startAt, endAt,
-// deadlineAt, capacity, minParticipants } } | { error } (Vietnamese).
-// `existing` = the stored event when editing: an unchanged start / deadline may already be in the past, a changed one may not.
-function parseEventForm(raw, now = new Date(), existing = null) {
+// The name, category and description of the event form. -> { title, category, description } | { error }
+function parseEventTexts(raw) {
   const title = String(raw.title || '').trim();
   if (!title) return { error: 'Tên sự kiện không được để trống.' };
   if (title.length > TITLE_MAX) return { error: `Tên sự kiện tối đa ${TITLE_MAX} ký tự.` };
@@ -87,6 +85,27 @@ function parseEventForm(raw, now = new Date(), existing = null) {
   if (!CATEGORIES[category]) return { error: 'Loại sự kiện không hợp lệ.' };
   const description = String(raw.description || '').trim();
   if (description.length > DESCRIPTION_MAX) return { error: `Mô tả / thể lệ tối đa ${DESCRIPTION_MAX} ký tự.` };
+  return { title, category, description };
+}
+
+// The form's text fields WITHOUT the time (the date / time picker follows): { title, category, description, people } ->
+// { value: { title, category, description, capacity, minParticipants } } | { error }
+function parseEventFormTexts(raw) {
+  const texts = parseEventTexts(raw);
+  if (texts.error) return texts;
+  const people = parsePeopleField(raw.people);
+  if (people.error) return { error: people.error };
+  return { value: { ...texts, capacity: people.max, minParticipants: people.min } };
+}
+
+// The create / edit modal values ({ title, category, description, time, people }) -> { value: { title, category, description, startAt, endAt,
+// deadlineAt, capacity, minParticipants } } | { error } (Vietnamese). The typed time is the old form (a modal opened before the picker existed):
+// the new form picks the time from lists (see "the time picker" below).
+// `existing` = the stored event when editing: an unchanged start / deadline may already be in the past, a changed one may not.
+function parseEventForm(raw, now = new Date(), existing = null) {
+  const texts = parseEventTexts(raw);
+  if (texts.error) return texts;
+  const { title, category, description } = texts;
 
   const { startAt, endAt, deadlineText } = parseTimeField(raw.time, now, existing);
   if (!startAt) return { error: 'Thời gian bắt đầu không hợp lệ. Ví dụ: 25/12 20:00 (thêm giờ kết thúc: 25/12 20:00 - 22:00, thêm hạn đăng ký: 25/12 20:00 | hạn 24/12 18:00)' };
@@ -105,6 +124,133 @@ function parseEventForm(raw, now = new Date(), existing = null) {
   const people = parsePeopleField(raw.people);
   if (people.error) return { error: people.error };
   return { value: { title, category, description, startAt, endAt, deadlineAt, capacity: people.max, minParticipants: people.min } };
+}
+
+// ---------- the time picker (select menus instead of a typed time) ----------
+
+const PICK_DAYS = 25; // the day list: today and the 24 days after
+const PICK_MINUTES = [0, 15, 30, 45];
+// [value, label]. A number is minutes after the start; 'day' = until 23:59 of the start day; 'none' = no end time.
+const PICK_DURATIONS = [['30', '30 phút'], ['60', '1 tiếng'], ['90', '1 tiếng 30'], ['120', '2 tiếng'], ['180', '3 tiếng'], ['240', '4 tiếng'], ['day', 'Cả ngày (đến 23:59)'], ['none', 'Không ghi giờ kết thúc']];
+// [value, label, minutes before the start]: where the registration closes ('prev22' = 22:00 of the day before the start).
+const PICK_DEADLINES = [['start', 'Lúc bắt đầu', 0], ['m30', 'Trước 30 phút', 30], ['h1', 'Trước 1 tiếng', 60], ['h3', 'Trước 3 tiếng', 180], ['d1', 'Trước 1 ngày', 1440], ['prev22', '22:00 hôm trước', null]];
+const PICK_KEYS = { dur: PICK_DURATIONS.map(([v]) => v), dl: PICK_DEADLINES.map(([v]) => v) };
+
+const pad2 = (n) => String(n).padStart(2, '0');
+// 'YYYY-MM-DD' of the Vietnam day of a date, and back ({ year, month (0-11), day } | null)
+const dayKeyOf = (date) => {
+  const p = toLocalParts(date);
+  return `${p.year}-${pad2(p.month + 1)}-${pad2(p.day)}`;
+};
+function parseDayKey(key) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(key));
+  if (!m) return null;
+  const day = { year: Number(m[1]), month: Number(m[2]) - 1, day: Number(m[3]) };
+  return dayKeyOf(fromLocal(day.year, day.month, day.day, 0, 0)) === key ? day : null; // 31/02 would roll over: not a day
+}
+
+// "T7 31/10" (weekday + date, Vietnam time) and "20:30"
+function dayLabelOf(date) {
+  const p = toLocalParts(date);
+  return `${DAY_NAMES[p.dow]} ${pad2(p.day)}/${pad2(p.month + 1)}`;
+}
+const hourMinuteOf = (date) => {
+  const p = toLocalParts(date);
+  return `${pad2(p.hour)}:${pad2(p.minute)}`;
+};
+
+// The day list of the picker: today + 24 days as { value, label }. `keep` = a day key outside that window (an edited event far away or already
+// past) takes the place of the last / first option so the stored day stays selectable.
+function pickDayOptions(now, keep = null) {
+  const today = toLocalParts(now);
+  const days = Array.from({ length: PICK_DAYS }, (_, i) => fromLocal(today.year, today.month, today.day + i, 0, 0));
+  const options = days.map((d, i) => ({ value: dayKeyOf(d), label: `${i === 0 ? 'Hôm nay · ' : i === 1 ? 'Ngày mai · ' : ''}${dayLabelOf(d)}` }));
+  const k = keep && parseDayKey(keep);
+  if (k && !options.some((o) => o.value === keep)) {
+    const extra = { value: keep, label: `${dayLabelOf(fromLocal(k.year, k.month, k.day, 0, 0))}/${k.year}` };
+    if (keep < options[0].value) options.splice(0, 0, extra), options.pop();
+    else options.splice(options.length - 1, 1, extra);
+  }
+  return options;
+}
+
+// The picker's defaults for a new event: tomorrow 20:00, 2 hours, registration until the start.
+function defaultPick(now) {
+  const p = toLocalParts(now);
+  return { day: dayKeyOf(fromLocal(p.year, p.month, p.day + 1, 0, 0)), hour: 20, min: 0, dur: '120', dl: 'start' };
+}
+
+// The picker values nearest to a stored event, and whether they say exactly its times (the lists step by 15 minutes).
+// -> { pick, exact, base }; `base` keeps the stored times so a value left untouched is saved as it was (see pickTimes).
+function pickFromEvent(event) {
+  const startAt = new Date(event.startAt);
+  const deadlineAt = new Date(event.deadlineAt);
+  const rounded = new Date(Math.round(startAt.getTime() / (15 * MINUTE)) * 15 * MINUTE);
+  const sp = toLocalParts(rounded);
+  const pick = { day: dayKeyOf(rounded), hour: sp.hour, min: sp.minute, dur: 'none', dl: 'start' };
+  let exact = rounded.getTime() === startAt.getTime();
+  if (event.endAt) {
+    const end = new Date(event.endAt);
+    const minutes = (end.getTime() - startAt.getTime()) / MINUTE;
+    if (end.getTime() === pickTimes({ ...pick, dur: 'day' }).endAt.getTime()) pick.dur = 'day';
+    else {
+      const fixed = PICK_DURATIONS.filter(([v]) => /^\d+$/.test(v));
+      const nearest = fixed.reduce((a, b) => (Math.abs(Number(b[0]) - minutes) < Math.abs(Number(a[0]) - minutes) ? b : a));
+      pick.dur = nearest[0];
+      if (Number(nearest[0]) !== minutes) exact = false;
+    }
+  }
+  const best = PICK_DEADLINES.map(([v]) => [v, pickTimes({ ...pick, dl: v }).deadlineAt]).reduce((a, b) => (Math.abs(b[1] - deadlineAt) < Math.abs(a[1] - deadlineAt) ? b : a));
+  pick.dl = best[0];
+  if (best[1].getTime() !== deadlineAt.getTime()) exact = false;
+  return { pick, exact, base: { pick: { ...pick }, startAt, endAt: event.endAt ? new Date(event.endAt) : null, deadlineAt } };
+}
+
+// The dates a pick stands for: { startAt, endAt (null: none), deadlineAt }. With `base` (see pickFromEvent) a part the manager did not touch
+// keeps its stored time, so saving an edit never moves a time the lists cannot say exactly.
+function pickTimes(pick, base = null) {
+  const d = parseDayKey(pick.day) || { year: 1970, month: 0, day: 1 };
+  const same = Boolean(base) && base.pick.day === pick.day && Number(base.pick.hour) === Number(pick.hour) && Number(base.pick.min) === Number(pick.min);
+  const start = same ? base.startAt : fromLocal(d.year, d.month, d.day, Number(pick.hour), Number(pick.min)); // an untouched start keeps its stored minutes: offsets count from it
+  let endAt = null;
+  if (pick.dur === 'day') endAt = fromLocal(d.year, d.month, d.day, 23, 59);
+  else if (pick.dur !== 'none') endAt = new Date(start.getTime() + Number(pick.dur) * MINUTE);
+  const [, , lead] = PICK_DEADLINES.find(([v]) => v === pick.dl) || PICK_DEADLINES[0];
+  const deadlineAt = pick.dl === 'prev22' ? fromLocal(d.year, d.month, d.day - 1, 22, 0) : new Date(start.getTime() - lead * MINUTE);
+  if (!same) return { startAt: start, endAt, deadlineAt };
+  return { startAt: base.startAt, endAt: base.pick.dur === pick.dur ? base.endAt : endAt, deadlineAt: base.pick.dl === pick.dl ? base.deadlineAt : deadlineAt };
+}
+
+// The rules of parseEventForm for the picked times -> an error text or null. `existing`: an unchanged start / deadline may be past.
+function checkPickTimes({ startAt, endAt, deadlineAt }, now = new Date(), existing = null) {
+  const startChanged = !existing || new Date(existing.startAt).getTime() !== startAt.getTime();
+  if (startChanged && startAt <= now) return 'Giờ bắt đầu đã qua, hãy chọn lại ngày / giờ.';
+  if (endAt && endAt <= startAt) return 'Giờ kết thúc phải sau giờ bắt đầu.';
+  if (deadlineAt > startAt) return 'Hạn đăng ký phải trước hoặc bằng giờ bắt đầu.';
+  const deadlineChanged = !existing || new Date(existing.deadlineAt).getTime() !== deadlineAt.getTime();
+  if (deadlineChanged && deadlineAt <= now) return 'Hạn đăng ký đã qua, hãy chọn hạn sớm hơn hoặc ngày xa hơn.';
+  return null;
+}
+
+// "2 ngày 3 giờ" · "5 giờ 10 phút" · "20 phút" (for a positive span in ms)
+function spanText(ms) {
+  const days = Math.floor(ms / DAY);
+  const hours = Math.floor((ms % DAY) / HOUR);
+  const minutes = Math.floor((ms % HOUR) / MINUTE);
+  if (days) return `${days} ngày${hours ? ` ${hours} giờ` : ''}`;
+  if (hours) return `${hours} giờ${minutes ? ` ${minutes} phút` : ''}`;
+  return `${Math.max(1, minutes)} phút`;
+}
+
+// The line under the picker: "→ T7 31/10 20:30 – 22:30 · hạn đăng ký 19:30 (còn 2 ngày 3 giờ)"
+function pickSummary({ startAt, endAt, deadlineAt }, now = new Date()) {
+  const sameDay = (a, b) => dayKeyOf(a) === dayKeyOf(b);
+  let when = `${dayLabelOf(startAt)} ${hourMinuteOf(startAt)}`;
+  if (endAt) when += ` – ${hourMinuteOf(endAt)}${sameDay(startAt, endAt) ? '' : ` (${dayLabelOf(endAt)})`}`;
+  else when += ' (không ghi giờ kết thúc)';
+  const deadline = sameDay(deadlineAt, startAt) ? hourMinuteOf(deadlineAt) : `${dayLabelOf(deadlineAt)} ${hourMinuteOf(deadlineAt)}`;
+  const left = deadlineAt > now ? ` (còn ${spanText(deadlineAt - now)})` : '';
+  return `→ ${when} · hạn đăng ký ${deadline}${left}`;
 }
 
 // The new deadline of the "⏳ Gia hạn" modal: still ahead and strictly before the start. -> { deadlineAt } | { error }
@@ -398,6 +544,19 @@ module.exports = {
   parseTimeField,
   parsePeopleField,
   parseEventForm,
+  parseEventFormTexts,
+  PICK_DAYS,
+  PICK_MINUTES,
+  PICK_DURATIONS,
+  PICK_DEADLINES,
+  PICK_KEYS,
+  parseDayKey,
+  pickDayOptions,
+  defaultPick,
+  pickFromEvent,
+  pickTimes,
+  checkPickTimes,
+  pickSummary,
   parseExtendDeadline,
   shortfallOf,
   categoryOf,

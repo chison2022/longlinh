@@ -70,6 +70,7 @@ create table game_characters (
   returned_at     timestamptz,                  -- when an import listed it again after it had left
   old_names       text[] not null default '{}', -- earlier names, oldest first (✏️ Đổi tên confirmed by a manager)
   game_uid        text,                         -- in-game character ID, digits only (5-20); null = unknown
+  game_uid_by     text,                         -- null = set by a manager / the gate; a Discord id = typed by that member (gn:uid), cleared with their self link
   created_at      timestamptz not null default now(),
   updated_at      timestamptz not null default now(),
   unique (guild_id, id)

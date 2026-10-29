@@ -10,7 +10,7 @@ const GONE_CODES = new Set([10003, 10008]); // Unknown Channel / Unknown Message
 // -> { action: 'edited' | 'posted', channelId, messageId }. Throws when the chosen channel cannot be used.
 async function postOrUpdateGatePanel(client, config) {
   const channel = await client.channels.fetch(config.gateChannelId);
-  const panel = buildGatePanel({ guildName: guildNameOf(config, channel.guild), autoApprove: config.gateAutoApprove !== false });
+  const panel = buildGatePanel({ guildName: guildNameOf(config, channel.guild), autoApprove: config.gateAutoApprove !== false, guest: Boolean(config.guestRoleId) });
   if (config.gatePanelMessageId && config.gatePanelChannelId === channel.id) {
     try {
       await channel.messages.edit(config.gatePanelMessageId, panel);

@@ -187,32 +187,31 @@ describe('parseExtendDeadline (⏳ Gia hạn)', () => {
 
 describe('buildEventModal', () => {
   const fieldsOfModal = (modal) => Object.fromEntries(modal.toJSON().components.map((l) => [l.component.custom_id, l]));
-  it('create: five fields, the category is a string select inside the modal, optional ones not required', () => {
+  it('create: four fields (no time: the picker follows), the category is a string select inside the modal, optional ones not required', () => {
     const modal = buildEventModal();
     assert.equal(modal.toJSON().custom_id, 'ev:newModal');
     assertModal(modal);
     const f = fieldsOfModal(modal);
-    assert.deepEqual(Object.keys(f), ['title', 'category', 'description', 'time', 'people']);
+    assert.deepEqual(Object.keys(f), ['title', 'category', 'description', 'people']);
+    assert.match(f.title.description, /chọn ngày giờ bằng danh sách/);
     assert.equal(f.category.component.type, ComponentType.StringSelect);
     assert.equal(f.category.component.required, true);
     assert.deepEqual(f.category.component.options.map((o) => o.value), ['pvp', 'mind', 'music', 'video', 'social', 'pve', 'other']);
     assert.deepEqual(f.category.component.options.map((o) => o.label), ['⚔️ PvP / thi đấu', '♟️ Cờ / trí tuệ', '🎤 Văn nghệ / hát', '🎬 Quay video / sáng tạo', '🎉 Giao lưu / họp mặt', '🐉 Boss / phó bản', '📦 Khác']);
     assert.deepEqual(f.category.component.options.filter((o) => o.default).map((o) => o.value), ['other'], 'Khác is preselected');
     assert.equal(f.title.component.required, true);
-    assert.equal(f.time.component.required, true);
     for (const id of ['description', 'people']) assert.equal(f[id].component.required, false, id);
     assert.equal(f.description.component.style, 2, 'a paragraph');
     assert.equal(f.description.component.max_length, 4000);
     for (const l of Object.values(f)) assert.ok(l.label.length <= 45, l.label);
   });
-  it('edit: prefilled, the category preselected, end time and deadline ride in the time field, min-max in the people field', () => {
+  it('edit: prefilled, the category preselected, min-max in the people field (the times are prefilled in the picker)', () => {
     const f = fieldsOfModal(buildEventModal(makeEvent({ category: 'music', endAt: vn(2026, 10, 17, 22), capacity: 32, minParticipants: 15, deadlineAt: vn(2026, 10, 17, 18) })));
     assert.equal(f.title.component.value, 'Tiệc bang');
     assert.deepEqual(f.category.component.options.filter((o) => o.default).map((o) => o.value), ['music']);
-    assert.equal(f.time.component.value, '17/10 20:00 - 22:00 | hạn 17/10 18:00');
+    assert.equal(f.time, undefined);
     assert.equal(f.people.component.value, '15-32');
     const g = fieldsOfModal(buildEventModal(makeEvent({ deadlineAt: vn(2026, 10, 17, 20), capacity: 20 })));
-    assert.equal(g.time.component.value, '17/10 20:00', 'a deadline equal to the start stays out');
     assert.equal(g.people.component.value, '20', 'a lone maximum is just the number');
     assert.equal(fieldsOfModal(buildEventModal(makeEvent({ minParticipants: 15 }))).people.component.value, '15-');
     assert.equal(fieldsOfModal(buildEventModal(makeEvent())).people.component.value, undefined);

@@ -5,7 +5,7 @@ const { normalizeName, classId } = require('../services/registrationService');
 const { plainClass } = require('../services/lineupStyle');
 const { missingPermissions } = require('./ui/panel');
 
-const KIND_LABEL = { member: 'Thành viên', class: 'phái', stranger: 'Người lạ' };
+const KIND_LABEL = { member: 'Thành viên', class: 'phái', stranger: 'Người lạ', guest: 'Khách' };
 const PROBLEM_TEXT = {
   missing: 'role không còn trong server',
   managed: 'là role của bot / tích hợp, không gán được',
@@ -15,6 +15,7 @@ const PROBLEM_TEXT = {
   everyone: 'là @everyone, không dùng làm role này được',
   is_admin: 'là role quản lý: ai bấm cũng tự cấp được quyền quản lý',
   same_as_member: 'trùng role Thành viên: chọn role khác',
+  guest_same_as_stranger: 'role Khách và role Người lạ phải khác nhau: chọn role khác',
   privileged: 'role này có quyền quản trị (Quản trị viên / Quản lý máy chủ, vai trò, kênh, tin nhắn, webhook, kick, ban, timeout, @everyone)',
 };
 
@@ -30,6 +31,13 @@ const PRIVILEGED = [
   'MentionEveryone',
   'ManageWebhooks',
   'ModerateMembers',
+  'MoveMembers',
+  'MuteMembers',
+  'DeafenMembers',
+  'ManageNicknames',
+  'ManageThreads',
+  'ManageEvents',
+  'ViewAuditLog',
 ].map((name) => PermissionFlagsBits[name]);
 
 const rolesOf = (guild) => (guild && guild.roles && guild.roles.cache) || new Map();
@@ -65,11 +73,12 @@ function roleProblem(guild, roleId, config = null, kind = null) {
   const role = rolesOf(guild).get(roleId);
   if (!role) return 'missing';
   if (role.managed) return 'managed';
-  if (config && (kind === 'class' || kind === 'stranger')) {
+  if (config && (kind === 'class' || kind === 'stranger' || kind === 'guest')) {
     const unsafe = unsafeRole(guild, roleId, config);
     if (unsafe) return unsafe;
   }
-  if (config && kind === 'stranger' && roleId === config.memberRoleId) return 'same_as_member';
+  if (config && (kind === 'stranger' || kind === 'guest') && roleId === config.memberRoleId) return 'same_as_member';
+  if (config && ((kind === 'guest' && roleId === config.strangerRoleId) || (kind === 'stranger' && roleId === config.guestRoleId))) return 'guest_same_as_stranger';
   const top = me.roles && me.roles.highest;
   if (top && role.position >= top.position) return 'hierarchy';
   return null;
@@ -129,6 +138,12 @@ function gateHealth(config, guild) {
     const problem = me ? roleProblem(guild, config.strangerRoleId, config, 'stranger') : null;
     if (problem && problem !== 'no_manage_roles') lines.push({ ok: false, text: `Role **Người lạ** <@&${config.strangerRoleId}>: ${PROBLEM_TEXT[problem]}.` });
     else lines.push({ ok: true, text: `Role **Người lạ**: <@&${config.strangerRoleId}> (gán khi vào server, gỡ khi được duyệt)` });
+  }
+
+  if (config.guestRoleId) {
+    const problem = me ? roleProblem(guild, config.guestRoleId, config, 'guest') : null;
+    if (problem && problem !== 'no_manage_roles') lines.push({ ok: false, text: `Role **Khách** <@&${config.guestRoleId}>: ${PROBLEM_TEXT[problem]}.` });
+    else lines.push({ ok: true, text: `Role **Khách**: <@&${config.guestRoleId}> (người bấm 🤝 Khách tự nhận, không cần duyệt)` });
   }
 
   if (config.gateChannelId) {

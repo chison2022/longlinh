@@ -1,6 +1,6 @@
 // Member-facing "Liên kết tên trong game" (pure: no Discord client, no DB). customIds (not admin-gated):
 // gn:open (the persistent panel button / the nudge after ✅ Tham gia) | gn:me | gn:change (compact view -> full picker) | gn:p:<page>:<ver> (◀ ▶) | gn:pick:<page>:<ver> (the select; value =
-// position in the latest roster, <ver> = rosterVersion of the roster it was drawn from) | gn:free (modal gn:freeModal) | gn:unlink.
+// position in the latest roster, <ver> = rosterVersion of the roster it was drawn from) | gn:free (modal gn:freeModal) | gn:unlink | gn:uid (modal gn:uidModal: the member's in-game character ID).
 const { ActionRowBuilder, ButtonBuilder, ButtonStyle, ContainerBuilder, StringSelectMenuBuilder, escapeMarkdown } = require('discord.js');
 const { truncate, textDisplay, v2Payload } = require('./common');
 
@@ -8,6 +8,7 @@ const { truncate, textDisplay, v2Payload } = require('./common');
 const LABELS = {
   open: '🎮 Chọn nhân vật của tôi',
   me: '👤 Xem nhân vật đã liên kết',
+  uid: '🆔 Nhập ID game',
   free: '✏️ Tên tôi không có trong danh sách',
   unlink: 'Gỡ liên kết',
   change: '🔄 Đổi nhân vật',
@@ -28,7 +29,7 @@ function buildGnPanel() {
   const container = new ContainerBuilder()
     .setAccentColor(0x1e3a8a)
     .addTextDisplayComponents(textDisplay(`${LABELS.title}\n${LABELS.intro}`))
-    .addActionRowComponents(new ActionRowBuilder().addComponents(button('gn:open', LABELS.open, ButtonStyle.Primary), button('gn:me', LABELS.me)));
+    .addActionRowComponents(new ActionRowBuilder().addComponents(button('gn:open', LABELS.open, ButtonStyle.Primary), button('gn:me', LABELS.me), button('gn:uid', LABELS.uid)));
   return v2Payload([container]);
 }
 
@@ -40,6 +41,9 @@ function linkLine(link) {
   if (!link) return 'Bạn **chưa liên kết** nhân vật nào trong game.';
   return `✅ Bạn đang là **${escapeMarkdown(truncate(link.gameName, 60))}** trong game.\n-# ${COMPACT_SOURCE[link.source] || COMPACT_SOURCE.admin}`;
 }
+
+// gn:me: the link line plus the saved in-game ID (or how to add it).
+const meLine = (link) => (link ? `${linkLine(link)}\n${link.gameUid ? `🆔 ID game: ${link.gameUid}` : `🆔 Chưa có ID game — bấm ${LABELS.uid}`}` : linkLine(null));
 
 // The full picker's status line (the member may be about to change the link).
 const currentLine = (link) => (link ? `Bạn đang là **${escapeMarkdown(truncate(link.gameName, 60))}** trong game (${SOURCE_TEXT[link.source] || SOURCE_TEXT.admin}).` : linkLine(null));
@@ -99,4 +103,4 @@ function buildPicker({ link = null, ranked = [], page = 0, ver = '0', hasRoster 
   return { content: truncate(lines.join('\n'), 2000), components: rows, allowedMentions: { parse: [] } };
 }
 
-module.exports = { LABELS, PAGE_SIZE, buildGnPanel, buildPicker, linkLine, rosterSelect };
+module.exports = { LABELS, PAGE_SIZE, buildGnPanel, buildPicker, linkLine, meLine, rosterSelect };

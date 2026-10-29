@@ -2,7 +2,10 @@
 // (the dashboard's admin gate): the manager view opens from adm:events (see ./admin), then ev:pick (select) · ev:sel|edit|lock|cancel|cancelok|
 // remind|remindok|maybe:<eid> · ev:new · modals ev:newModal | ev:editModal:<eid>. The persistent panel (see ../eventPanel) has ev:pnew (the create form,
 // modal ev:pnewModal) and ev:pmanage (opens the manager view as a new ephemeral reply): the panel message itself is never edited by these. A new event is first previewed (ev:drtag|drmaybe|drpost|drcancel:<draft>,
-// the draft lives in memory for 15 min). The shortfall notice in the admin channel has ev:mincancel|minext|minkeep:<eid> + modal ev:minextModal:<eid>.
+// the draft lives in memory for 15 min). The form has no time field: its submit shows the date / time picker first (ev:pk:<picker>:<day|hour|min|dur|dl>
+// selects, ev:pkok|pkcancel:<picker>; the picker lives in memory for 30 min like the draft), then the preview (create) or the save (edit).
+// A modal with a typed `time` field (opened before the picker existed) still goes the old way. The shortfall notice in the admin channel has
+// ev:mincancel|minext|minkeep:<eid> + modal ev:minextModal:<eid>.
 // The manager view is one ephemeral V2 message edited in place.
 const crypto = require('node:crypto');
 const { MessageFlags, AttachmentBuilder } = require('discord.js');
@@ -14,6 +17,7 @@ const eventService = require('../../services/eventService');
 const { getConfigOrDefault } = require('../../services/guildConfigService');
 const { isAdmin } = require('../permissions');
 const { buildEventModal, buildExtendModal } = require('../ui/settingsModal');
+const { buildEventPicker } = require('../ui/eventPicker');
 const { buildEventsView, buildListMessages, buildRulesMessages, buildEventPreview, buildMinNotice } = require('../ui/eventCard');
 const { defang } = require('../../services/mailService');
 const { discordTs } = require('../../utils/time');
@@ -34,7 +38,9 @@ const CLOSED = '🔒 Đã hết hạn đăng ký sự kiện này.';
 const CANCELLED = '❌ Sự kiện này đã huỷ.';
 const DRAFT_EXPIRED = 'Bản nháp đã hết hạn, bấm ➕ Tạo sự kiện lại.';
 const DRAFT_TTL_MS = 15 * 60 * 1000;
-const ADMIN_ACTIONS = new Set(['pick', 'sel', 'new', 'newModal', 'edit', 'editModal', 'lock', 'cancel', 'cancelok', 'remind', 'remindok', 'maybe', 'drtag', 'drmaybe', 'drpost', 'drcancel', 'mincancel', 'minext', 'minextModal', 'minkeep', 'pnew', 'pnewModal', 'pmanage', 'doc']);
+const PICKER_EXPIRED = 'Phiên tạo sự kiện đã hết hạn, bấm ➕ Tạo sự kiện lại.';
+const PICKER_TTL_MS = 30 * 60 * 1000;
+const ADMIN_ACTIONS = new Set(['pk', 'pkok', 'pkcancel', 'pick', 'sel', 'new', 'newModal', 'edit', 'editModal', 'lock', 'cancel', 'cancelok', 'remind', 'remindok', 'maybe', 'drtag', 'drmaybe', 'drpost', 'drcancel', 'mincancel', 'minext', 'minextModal', 'minkeep', 'pnew', 'pnewModal', 'pmanage', 'doc']);
 const OPENS_MODAL = new Set(['new', 'pnew', 'edit', 'minext']);
 const SUBMITS = new Set(['newModal', 'pnewModal', 'editModal', 'minextModal']);
 const NEW_EPHEMERAL = new Set(['pnewModal', 'pmanage', 'doc']); // answered from the persistent panel: always a new ephemeral reply, never an edit of the panel
@@ -44,6 +50,10 @@ const reminding = new Set(); // event ids with a manual reminder being sent by t
 // The previews of new events: draftId -> { userId, guildId, value, tag, allowMaybe, at }. Memory only (like the publish draft of ./teams): gone after
 // a restart, and after DRAFT_TTL_MS. Only the admin who made it can use it.
 const drafts = new Map();
+// The pickers of a form being filled: pickerId -> { userId, guildId, eventId (null: a new event), texts, pick, base, note, done, at }. Memory only, like the
+// drafts: the text fields of the modal cannot ride in a customId. A restart / the TTL ends it with PICKER_EXPIRED; `done` = ✅ was taken (a double click
+// does nothing).
+const pickers = new Map();
 
 function pruneDrafts(now = Date.now()) {
   for (const [id, d] of drafts) if (now - d.at > DRAFT_TTL_MS) drafts.delete(id);
@@ -57,6 +67,15 @@ function getDraft(draftId, interaction, { take = false } = {}) {
   d.at = Date.now(); // every preview interaction keeps the draft alive
   if (take) drafts.delete(String(draftId));
   return d;
+}
+
+function getPicker(pickerId, interaction) {
+  const now = Date.now();
+  for (const [id, p] of pickers) if (now - p.at > PICKER_TTL_MS) pickers.delete(id);
+  const p = pickers.get(String(pickerId));
+  if (!p || p.userId !== interaction.user.id || p.guildId !== interaction.guildId) return null;
+  p.at = now;
+  return p;
 }
 
 async function loadEvent(interaction, eventId) {
@@ -157,8 +176,17 @@ async function openManage(interaction, src = null) {
 
 const fieldsOf = (interaction) => {
   const get = (id) => interaction.fields.getTextInputValue(id) || '';
+  const has = (id) => {
+    try {
+      interaction.fields.getTextInputValue(id);
+      return true;
+    } catch {
+      return false; // getTextInputValue throws for a field the modal does not have
+    }
+  };
   const [category] = interaction.fields.getStringSelectValues('category'); // the select inside the modal
-  return { title: get('title'), category: category || '', description: get('description'), time: get('time'), people: get('people') };
+  // `time` only when the submitted modal has it (an old one): the new form picks the time afterwards
+  return { title: get('title'), category: category || '', description: get('description'), ...(has('time') ? { time: get('time') } : {}), people: get('people') };
 };
 
 // The preview of a draft: the card as it will be posted + the toggles.
@@ -166,20 +194,120 @@ function previewOf(draftId, draft, config, note = null) {
   return buildEventPreview({ event: { _id: 'preview', guildId: draft.guildId, ...draft.value }, draftId, tag: draft.tag, allowMaybe: draft.allowMaybe, hasRole: Boolean(config.memberRoleId), note });
 }
 
-// The form was filled: show the preview (nothing is created yet).
-async function onNewSubmit(interaction, config) {
-  const show = async (note, selectedId = null) => interaction.editReply(await viewOf(interaction.guildId, { selectedId, note }));
-  const { value, error } = eventService.parseEventForm(fieldsOf(interaction), new Date());
-  if (error) {
-    logEvent('event', 'create', { ...ixCtx(interaction), result: 'invalid' });
-    return show(`❌ ${error}`);
-  }
-  if (!eventService.eventChannelOf(config)) return show('⚠️ Chưa chọn kênh thông báo sự kiện. Dùng lệnh /setup trước.');
+// The complete event value is known: show the preview (nothing is created yet).
+async function showPreview(interaction, config, value) {
   pruneDrafts();
   const draftId = crypto.randomBytes(4).toString('hex');
   const draft = { userId: interaction.user.id, guildId: interaction.guildId, value, tag: false, allowMaybe: true, at: Date.now() };
   drafts.set(draftId, draft);
   return interaction.editReply(previewOf(draftId, draft, config));
+}
+
+const NO_CHANNEL = '⚠️ Chưa chọn kênh thông báo sự kiện. Dùng lệnh /setup trước.';
+
+// The form was filled. No time field (the normal case): the date / time picker follows. A typed `time` (an old modal): the preview at once.
+async function onNewSubmit(interaction, config) {
+  const show = async (note, selectedId = null) => interaction.editReply(await viewOf(interaction.guildId, { selectedId, note }));
+  const raw = fieldsOf(interaction);
+  const { value, error } = raw.time === undefined ? eventService.parseEventFormTexts(raw) : eventService.parseEventForm(raw, new Date());
+  if (error) {
+    logEvent('event', 'create', { ...ixCtx(interaction), result: 'invalid' });
+    return show(`❌ ${error}`);
+  }
+  if (!eventService.eventChannelOf(config)) return show(NO_CHANNEL);
+  if (raw.time === undefined) return showPicker(interaction, value);
+  return showPreview(interaction, config, value);
+}
+
+// ---------- the date / time picker: ev:pk:<picker>:<field> (select), ev:pkok | pkcancel:<picker> ----------
+
+const PICKER_FIELDS = new Set(['day', 'hour', 'min', 'dur', 'dl']);
+
+// The times of the picker, and why ✅ is off (null: it is on).
+function pickerState(rec, now) {
+  const times = eventService.pickTimes(rec.pick, rec.base);
+  const existing = rec.base ? { startAt: rec.base.startAt, deadlineAt: rec.base.deadlineAt } : null; // an edit may keep a time that is already past
+  return { times, error: eventService.checkPickTimes(times, now, existing) };
+}
+
+function pickerView(pickerId, rec, now = new Date()) {
+  const { times, error } = pickerState(rec, now);
+  return buildEventPicker({ draftId: pickerId, title: rec.texts.title, editing: Boolean(rec.eventId), pick: rec.pick, times, error, note: rec.note, now });
+}
+
+// The form's texts are valid: open the picker (`event` = the stored event of an edit: its times pre-select the nearest list values).
+async function showPicker(interaction, texts, event = null) {
+  const now = new Date();
+  let pick;
+  let base = null;
+  let note = null;
+  if (event) {
+    const found = eventService.pickFromEvent(event);
+    ({ pick, base } = found);
+    if (!found.exact) note = 'ℹ️ Giờ hiện tại của sự kiện không có đúng trong các danh sách nên đã chọn giá trị gần nhất. Không đổi mục nào thì bot giữ nguyên giờ cũ.';
+  } else {
+    pick = eventService.defaultPick(now);
+  }
+  const pickerId = crypto.randomBytes(4).toString('hex');
+  const rec = { userId: interaction.user.id, guildId: interaction.guildId, eventId: event ? String(event._id) : null, texts, pick, base, note, done: false, at: Date.now() };
+  getPicker('', interaction); // (drops the expired ones)
+  pickers.set(pickerId, rec);
+  return interaction.editReply(pickerView(pickerId, rec, now));
+}
+
+const pickerExpired = async (interaction) => interaction.editReply(await viewOf(interaction.guildId, { note: PICKER_EXPIRED }));
+
+// A select changed: store the value, redraw the same message with the new summary.
+async function onPick(interaction, pickerId, field) {
+  const rec = getPicker(pickerId, interaction);
+  if (!rec) return pickerExpired(interaction);
+  if (rec.done) return undefined;
+  const now = new Date();
+  const value = String((interaction.values || [])[0] ?? '');
+  const valid = {
+    day: () => eventService.pickDayOptions(now, rec.pick.day).some((o) => o.value === value),
+    hour: () => /^\d{1,2}$/.test(value) && Number(value) <= 23,
+    min: () => /^\d+$/.test(value) && eventService.PICK_MINUTES.includes(Number(value)),
+    dur: () => eventService.PICK_KEYS.dur.includes(value),
+    dl: () => eventService.PICK_KEYS.dl.includes(value),
+  };
+  if (PICKER_FIELDS.has(field) && valid[field]()) {
+    rec.pick[field] = field === 'hour' || field === 'min' ? Number(value) : value;
+    rec.note = null;
+  }
+  return interaction.editReply(pickerView(pickerId, rec, now));
+}
+
+// ✅ Tạo sự kiện (-> the preview of the new event) | ✅ Lưu (-> the event is updated).
+async function onPickOk(interaction, config, pickerId) {
+  const rec = getPicker(pickerId, interaction);
+  if (!rec) return pickerExpired(interaction);
+  if (rec.done) return undefined;
+  const now = new Date();
+  const { times, error } = pickerState(rec, now);
+  if (error) return interaction.editReply(pickerView(pickerId, rec, now)); // (✅ is off then; this is a forced click or the time passed meanwhile)
+  const value = { ...rec.texts, ...times };
+  if (!rec.eventId) {
+    if (!eventService.eventChannelOf(config)) {
+      rec.note = NO_CHANNEL;
+      return interaction.editReply(pickerView(pickerId, rec, now));
+    }
+    rec.done = true;
+    return showPreview(interaction, config, value);
+  }
+  rec.done = true;
+  const event = await loadEvent(interaction, rec.eventId);
+  const show = async (note) => interaction.editReply(await viewOf(interaction.guildId, { selectedId: rec.eventId, note }));
+  if (!event) return show(`❌ ${NOT_FOUND}`);
+  if (!isLive(event)) return show(`❌ Sự kiện đã ${event.status === 'cancelled' ? 'huỷ' : 'kết thúc'}, không sửa được.`);
+  return applyEdit(interaction, event, value);
+}
+
+// ↩ Huỷ
+async function onPickCancel(interaction, pickerId) {
+  const rec = getPicker(pickerId, interaction);
+  if (rec) pickers.delete(String(pickerId));
+  return interaction.editReply(await viewOf(interaction.guildId, { selectedId: rec && rec.eventId, note: `Đã huỷ, chưa ${rec && rec.eventId ? 'sửa' : 'tạo'} sự kiện nào.` }));
 }
 
 // ev:drtag | drmaybe (toggles) | drpost (📢 Đăng) | drcancel (Huỷ) : <draft>
@@ -231,11 +359,20 @@ async function onEditSubmit(interaction, eventId) {
   const event = await loadEvent(interaction, eventId);
   if (!event) return show(`❌ ${NOT_FOUND}`);
   if (!isLive(event)) return show(`❌ Sự kiện đã ${event.status === 'cancelled' ? 'huỷ' : 'kết thúc'}, không sửa được.`);
-  const { value, error } = eventService.parseEventForm(fieldsOf(interaction), new Date(), event);
+  const raw = fieldsOf(interaction);
+  const { value, error } = raw.time === undefined ? eventService.parseEventFormTexts(raw) : eventService.parseEventForm(raw, new Date(), event);
   if (error) {
     logEvent('event', 'edit', { ...ixCtx(interaction), eid: eventId, result: 'invalid' });
     return show(`❌ ${error}`);
   }
+  if (raw.time === undefined) return showPicker(interaction, value, event); // the times come from the picker
+  return applyEdit(interaction, event, value);
+}
+
+// Save the edit of a live event (`value` = parseEventForm's value, or the picker's).
+async function applyEdit(interaction, event, value) {
+  const eventId = String(event._id);
+  const show = async (note) => interaction.editReply(await viewOf(interaction.guildId, { selectedId: eventId, note }));
   const startChanged = new Date(event.startAt).getTime() !== value.startAt.getTime();
   const deadlineChanged = new Date(event.deadlineAt).getTime() !== value.deadlineAt.getTime();
   // a locked event given a deadline (and a start) still ahead is open again, like "⏳ Gia hạn": the shortfall notice may fire again at the new deadline
@@ -461,7 +598,7 @@ async function openModal(interaction, action, eventId) {
   return interaction.showModal(action === 'minext' ? buildExtendModal(event) : buildEventModal(event));
 }
 
-async function handleAdmin(interaction, action, eventId) {
+async function handleAdmin(interaction, action, eventId, arg) {
   if (OPENS_MODAL.has(action)) return openModal(interaction, action, eventId);
   // The manager view is an ephemeral message: a modal submit from it edits it in place too.
   const fromMessage = typeof interaction.isFromMessage === 'function' && interaction.isFromMessage();
@@ -481,6 +618,12 @@ async function handleAdmin(interaction, action, eventId) {
       return onNewSubmit(interaction, config);
     case 'editModal':
       return onEditSubmit(interaction, eventId);
+    case 'pk':
+      return onPick(interaction, eventId, arg); // (the 3rd part is the picker id, the 4th the field)
+    case 'pkok':
+      return onPickOk(interaction, config, eventId);
+    case 'pkcancel':
+      return onPickCancel(interaction, eventId);
     case 'lock':
       return onLock(interaction, eventId);
     case 'cancel':
@@ -514,7 +657,7 @@ async function handle(interaction, parts) {
   if (action === 'rp') return onReply(interaction, eventId, arg);
   if (action === 'ls') return onList(interaction, eventId);
   if (action === 'rules') return onRules(interaction, eventId);
-  if (ADMIN_ACTIONS.has(action)) return handleAdmin(interaction, action, eventId);
+  if (ADMIN_ACTIONS.has(action)) return handleAdmin(interaction, action, eventId, arg);
   return undefined;
 }
 

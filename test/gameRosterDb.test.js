@@ -93,7 +93,7 @@ describe('game name links', () => {
     const rows = await chars();
     assert.equal(rows.filter((r) => r.name === 'Người Mới').length, 1);
     assert.equal(rows.find((r) => r.name === 'Người Mới').origin, 'roster');
-    assert.deepEqual(await gr.getLink(G, sid(1)), { gameName: 'Người Mới', source: 'selfFree' });
+    assert.deepEqual(await gr.getLink(G, sid(1)), { gameName: 'Người Mới', source: 'selfFree', gameUid: null, characterId: (await db.one("select id from game_characters where name = 'Người Mới'")).id });
   });
   it('selfLink: refused when somebody else holds the name or an admin paired me; selfUnlink removes only my own link', async () => {
     await gr.setMappings(G, [{ discordId: sid(1), gameName: 'An' }]);
@@ -349,5 +349,86 @@ describe('in-game character ID (game_uid)', () => {
     assert.ok(!(await gr.renameCharacter(G, L('Cũ2'), F('Mới2'))).error);
     assert.equal(await uidOf('Mới2'), '42222', "the old row's ID");
     assert.equal((await db.one(`select count(*) as n from game_characters where game_uid is not null`)).n, 2);
+  });
+});
+
+describe('IDs typed by a member (game_uid_by)', () => {
+  const A = sid(1);
+  const B = sid(2);
+  const row = (name) => db.one('select game_uid, game_uid_by from game_characters where name = $1 order by id limit 1', [name]);
+  const typed = async (who, name, uid) => {
+    await gr.selfLink(G, who, name, { displayName: 'N' });
+    const link = await gr.getLink(G, who);
+    return gr.claimGameUid(G, name, uid, { characterId: link.characterId, by: who });
+  };
+  beforeEach(() => save([m('An'), m('Bình'), m('Chi')], T1));
+
+  it('a member-typed ID records who typed it; a manager (setGameUid) or the gate (claim without by) leaves it null', async () => {
+    assert.equal((await typed(A, 'An', '11111')).status, 'set');
+    assert.deepEqual(await row('An'), { game_uid: '11111', game_uid_by: A });
+    await gr.setGameUid(G, 'An', '22222');
+    assert.deepEqual(await row('An'), { game_uid: '22222', game_uid_by: null }, 'the manager took it over');
+    assert.equal((await gr.claimGameUid(G, 'Bình', '33333')).status, 'set');
+    assert.deepEqual(await row('Bình'), { game_uid: '33333', game_uid_by: null });
+    await gr.setGameUid(G, 'An', '');
+    assert.deepEqual(await row('An'), { game_uid: null, game_uid_by: null });
+  });
+  it('unlinking takes back the ID the member typed - but never one a manager or the gate set', async () => {
+    await typed(A, 'An', '11111');
+    assert.equal(await gr.selfUnlink(G, A), true);
+    assert.deepEqual(await row('An'), { game_uid: null, game_uid_by: null });
+    await gr.setGameUid(G, 'Bình', '33333');
+    await gr.selfLink(G, A, 'Bình', { displayName: 'N' });
+    await gr.selfUnlink(G, A);
+    assert.equal((await row('Bình')).game_uid, '33333');
+  });
+  it('the link-stamp-unlink-repeat loop plants nothing: a second member linking the freed name finds no ID', async () => {
+    await typed(A, 'An', '11111');
+    await gr.selfUnlink(G, A);
+    await gr.selfLink(G, B, 'An', { displayName: 'N' });
+    assert.equal((await gr.getLink(G, B)).gameUid, null);
+  });
+  it('moving the self link to another name takes the ID back; relinking the same name keeps it', async () => {
+    await typed(A, 'An', '11111');
+    await gr.selfLink(G, A, 'An', { displayName: 'N' });
+    assert.equal((await row('An')).game_uid, '11111');
+    await gr.selfLink(G, A, 'Bình', { displayName: 'N' });
+    assert.deepEqual(await row('An'), { game_uid: null, game_uid_by: null });
+  });
+  it('an admin pairing that takes the character away (or moves the member) takes the typed ID back', async () => {
+    await typed(A, 'An', '11111');
+    await gr.setMappings(G, [{ discordId: B, gameName: 'An' }]); // B takes the name from A
+    assert.deepEqual(await row('An'), { game_uid: null, game_uid_by: null });
+    await typed(sid(3), 'Bình', '22222');
+    await gr.setMappings(G, [{ discordId: sid(3), gameName: 'Chi' }]); // this member is re-paired to another character
+    assert.deepEqual(await row('Bình'), { game_uid: null, game_uid_by: null });
+    await typed(sid(4), 'Bình', '33333');
+    await gr.removeMappings(G, [sid(4)]);
+    assert.equal((await row('Bình')).game_uid, null);
+  });
+  it('renameCharacter carries who typed the ID', async () => {
+    await save([m('Cũ', { daysInGuild: 40 }), m('An')], T2);
+    await save([m('Mới', { daysInGuild: 44 }), m('An')], T3);
+    const { left, fresh } = await gr.renameChoices(G, new Date('2026-10-20T00:00:00Z'));
+    const oldRow = left.find((c) => c.name === 'Cũ');
+    await gr.claimGameUid(G, 'Cũ', '41111', { characterId: oldRow.id, by: A });
+    assert.ok(!(await gr.renameCharacter(G, oldRow.id, fresh.find((c) => c.name === 'Mới').id)).error);
+    assert.deepEqual(await row('Mới'), { game_uid: '41111', game_uid_by: A });
+  });
+  it('the linked character id decides: a departed row and a live row with the same name key are not mixed up', async () => {
+    await save([m('Bình'), m('Chi')], T2); // An left
+    const old = await db.one("select id, name_key from game_characters where name = 'An'");
+    await db.q("insert into game_characters (guild_id, name_key, name, origin) values ($1, $2, 'An', 'typed')", [G, old.name_key]); // a live namesake
+    const mid = await memberStore.memberId(G, A, 'N');
+    await db.q("insert into character_links (character_id, member_id, guild_id, source) values ($1, $2, $3, 'self')", [old.id, mid, G]);
+    const link = await gr.getLink(G, A);
+    assert.equal(String(link.characterId), String(old.id));
+    await db.q('update game_characters set game_uid = $1 where id = $2', ['55555', old.id]);
+    assert.match((await gr.checkGameUid(G, '66666', { exceptName: 'An', exceptId: link.characterId })).error, /đã có một ID game khác/, 'judged on the linked row');
+    assert.deepEqual(await gr.checkGameUid(G, '55555', { exceptName: 'An', exceptId: link.characterId }), { uid: '55555' });
+    await db.q('update game_characters set game_uid = null where id = $1', [old.id]);
+    assert.equal((await gr.claimGameUid(G, 'An', '77777', { characterId: link.characterId, by: A })).status, 'set');
+    const rows = await db.q("select id, game_uid from game_characters where name = 'An' order by id");
+    assert.deepEqual(rows.map((r) => [String(r.id) === String(old.id), r.game_uid]), [[true, '77777'], [false, null]]);
   });
 });

@@ -103,27 +103,19 @@ function categorySelect(current) {
   return new LabelBuilder().setLabel('Loại sự kiện').setStringSelectMenuComponent(select);
 }
 
-// "dd/mm HH:mm[ - HH:mm] | hạn dd/mm HH:mm" as the form shows it (the deadline part only when it differs from the start).
-function timeValue(event) {
-  const start = `${formatLocalDateTime(new Date(event.startAt))}${event.endAt ? ` - ${formatLocalDateTime(new Date(event.endAt)).split(' ')[1]}` : ''}`;
-  const sameAsStart = new Date(event.deadlineAt).getTime() === new Date(event.startAt).getTime();
-  return sameAsStart ? start : `${start} | hạn ${formatLocalDateTime(new Date(event.deadlineAt))}`;
-}
-
 // "15-32" · "15-" · "20" (max only) · '' (see eventService.parsePeopleField)
 const peopleValue = (event) => (event.minParticipants ? `${event.minParticipants}-${event.capacity || ''}` : event.capacity ? String(event.capacity) : '');
 
-// The create / edit form of a guild event (ev:newModal / ev:editModal:<eid>), five fields: name, category (select), description / rules,
-// time (with an optional end time and deadline), people (min-max). `event` = the stored event to prefill, or null.
+// The create / edit form of a guild event (ev:newModal / ev:editModal:<eid>), four fields: name, category (select), description / rules,
+// people (min-max). The time is NOT typed: the next step is the date / time picker (see ./eventPicker). `event` = the stored event to prefill, or null.
 function buildEventModal(event = null) {
   return new ModalBuilder()
     .setCustomId(event ? `ev:editModal:${event._id}` : 'ev:newModal')
     .setTitle(event ? 'Sửa sự kiện' : 'Tạo sự kiện')
     .addLabelComponents(
-      textField('title', 'Tên sự kiện', { value: event && event.title, maxLength: 100 }),
+      textField('title', 'Tên sự kiện', { value: event && event.title, maxLength: 100, description: 'Bước tiếp theo: chọn ngày giờ bằng danh sách.' }),
       categorySelect(event ? eventService.categoryOf(event).key : defaults.eventCategoryDefault),
       textField('description', 'Mô tả / thể lệ (không bắt buộc)', { style: TextInputStyle.Paragraph, value: event && event.description, required: false, maxLength: eventService.DESCRIPTION_MAX, description: 'Xuống dòng và **in đậm** dùng được. Không tag được ai.' }),
-      textField('time', 'Thời gian (giờ Việt Nam)', { value: event ? timeValue(event) : undefined, maxLength: 60, placeholder: '16/10 20:00 - 22:00 | hạn 14/10 22:00', description: 'dd/mm HH:mm[ - HH:mm] | hạn dd/mm HH:mm. Bỏ phần hạn = đến giờ bắt đầu' }),
       textField('people', 'Số người: tối thiểu-tối đa', { value: event ? peopleValue(event) : undefined, required: false, maxLength: 12, placeholder: '15-32', description: '15-32 · 15- (chỉ tối thiểu) · -20 hoặc 20 (chỉ tối đa) · trống = không giới hạn' })
     );
 }

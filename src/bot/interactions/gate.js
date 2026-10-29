@@ -1,8 +1,9 @@
 // The new-member gate (customIds gate:*, views in ../ui/gate.js, rules in ../../services/gateService.js).
-//  Public panel: gate:member (one button). The member path is three ephemeral steps (character, class, send) built on the SAME roster
+//  Public panel: gate:member (+ gate:gst "🤝 Khách" while config.guestRoleId is set: a confirm step, then the guest role at once - self-serve,
+//  no request, no manager decision, no cooldown; managers only get an info line). The member path is three ephemeral steps (character, class, send) built on the SAME roster
 //  ranking / holder rules as the self-link picker (gn, see ./gameName availability); the request is then posted as a card in the admin
-//  channel where a manager presses ✅ Duyệt / ❌ Từ chối (admin-gated). Nothing here edits channel permissions. There is no Khách /
-//  Chờ duyệt role: gate:guest / gate:swguest / gate:tg of old messages answer that they are gone.
+//  channel where a manager presses ✅ Duyệt / ❌ Từ chối (admin-gated). Nothing here edits channel permissions. There is no Chờ duyệt
+//  role: gate:guest / gate:swguest / gate:tg of old messages (the retired guest path) answer that they are gone.
 //  A role that cannot be changed never half-applies: the roles are checked BEFORE anything is saved, the status moves with one atomic
 //  update (a double click has one winner), and a failed role call puts the request back to pending so a retry works.
 const { MessageFlags, SnowflakeUtil } = require('discord.js');
@@ -29,7 +30,10 @@ const GATE_OFF = '🚪 Cổng vào đang tắt, hãy nhờ quản lý.';
 const ALREADY_MEMBER = '✅ Bạn đã là thành viên bang.';
 const ROSTER_CHANGED = 'Danh sách game vừa được cập nhật — chọn lại từ danh sách mới.';
 const LOADING = '⏳ Bot đang tải danh sách thành viên Discord, thử lại sau ít giây.';
+const GUEST_GONE_NOW = '🤝 Nút Khách đang tắt, hãy nhờ quản lý.';
 const GUEST_GONE = '🚶 Lối vào Khách đang tắt — muốn vào bang hãy bấm ⚔️ Thành viên bang ở kênh cổng vào.';
+const ALREADY_GUEST = '🤝 Bạn đã là khách của server.';
+const GUEST_DONE = '🤝 Bạn đã vào server với vai trò khách.';
 const TG_GONE = 'Nút “Chuyển thành Khách” không còn dùng nữa — duyệt hoặc từ chối yêu cầu này.';
 const STATUS_TEXT = { approved: 'đã được duyệt', rejected: 'đã bị từ chối', guest: 'đã chuyển thành Khách (cũ)', cancelled: 'đã bị huỷ', revoked: 'đã bị thu hồi' };
 
@@ -80,6 +84,75 @@ async function entryBlock(interaction, config) {
   const until = gateService.requestBlockedUntil(interaction.guildId, interaction.user.id);
   if (until) return ui.ephemeral(`⏳ Bạn đã gửi ${gateService.REQUESTS_PER_HOUR} yêu cầu trong 1 giờ qua. Thử lại ${discordTs(new Date(until), 'R')}.`);
   return null;
+}
+
+// ---------- guest path (self-serve) ----------
+
+// The checks of both guest steps. -> a reply payload, or null to go on.
+async function guestBlock(interaction, config) {
+  if (!isOn(config, 'gate')) return ui.ephemeral(GATE_OFF);
+  if (!config.guestRoleId) return ui.ephemeral(GUEST_GONE_NOW);
+  const member = await memberOf(interaction);
+  if (holds(member, config.memberRoleId)) return ui.ephemeral(ALREADY_MEMBER);
+  if (holds(member, config.guestRoleId)) return ui.ephemeral(ALREADY_GUEST);
+  return null;
+}
+
+// 🤝 Khách -> the confirm step.
+async function onGuest(interaction) {
+  const config = await getConfigOrDefault(interaction.guildId);
+  return interaction.editReply((await guestBlock(interaction, config)) || ui.buildGuestConfirm());
+}
+
+// A double click on ✅ Vào làm khách must not post two info cards: one run per person at a time (the stamp expires on its own).
+const joining = new Map(); // "guild:user" -> started at
+const JOIN_LOCK_MS = 10 * 1000;
+
+// ✅ Vào làm khách -> the guest role at once; the managers get an info line (best effort).
+async function onGuestJoin(interaction) {
+  const key = `${interaction.guildId}:${interaction.user.id}`;
+  const started = joining.get(key);
+  if (started && Date.now() - started < JOIN_LOCK_MS) return undefined; // the first click answers
+  joining.set(key, Date.now());
+  try {
+    return await guestJoin(interaction);
+  } finally {
+    joining.delete(key);
+  }
+}
+
+async function guestJoin(interaction) {
+  const config = await getConfigOrDefault(interaction.guildId, { fresh: true });
+  const block = await guestBlock(interaction, config);
+  if (block) return interaction.editReply(block);
+  const member = await memberOf(interaction);
+  const plan = [{ kind: 'guest', id: config.guestRoleId }];
+  const bad = checkRoles(interaction.guild, plan, config);
+  if (bad.length) {
+    bad.forEach((f) => roleFailed(interaction, { kind: f.kind, role: f.id, action: 'guest', problem: f.problem }));
+    return interaction.editReply(ui.ephemeral('⚠️ Bot chưa cấp được role khách, hãy báo quản lý.'));
+  }
+  const changed = await applyRoles(member, plan, 'Gate: tự vào làm khách');
+  if (changed.addError) {
+    roleFailed(interaction, { kind: 'add', role: config.guestRoleId, action: 'guest', err: changed.addError });
+    return interaction.editReply(ui.ephemeral('⚠️ Discord từ chối khi cấp role khách, hãy báo quản lý.'));
+  }
+  const notes = [];
+  const strangerNote = await dropStranger(member, config);
+  if (strangerNote) notes.push(strangerNote);
+  logEvent('gate', 'guest_join', { ...ixCtx(interaction), member: interaction.user.id });
+  const adminChannelId = gateService.gateAdminChannelOf(config);
+  if (adminChannelId) {
+    try {
+      const createdAt = createdAtOf(interaction.user.id);
+      const channel = await interaction.client.channels.fetch(adminChannelId);
+      await channel.send(v2Create(ui.buildGuestJoinedCard({ member: { id: interaction.user.id, displayName: nameOf(interaction), createdAt, joinedAt: member.joinedAt || null }, warnings: [...cardWarnings({ createdAt, holder: null }), ...notes] })));
+    } catch (err) {
+      console.error('[gate] cannot post the guest info line:', err.message);
+      logEvent('gate', 'guest_info_failed', { ...ixCtx(interaction), err, lvl: 'warn' });
+    }
+  }
+  return interaction.editReply(ui.ephemeral(GUEST_DONE));
 }
 
 async function onMember(interaction) {
@@ -326,9 +399,22 @@ async function dropStranger(member, config) {
   }
 }
 
+// A guest who became a member no longer needs the guest role. Best effort: -> a note for the card, or null. Never throws.
+async function dropGuest(member, config) {
+  const id = config.guestRoleId;
+  if (!id || !holds(member, id)) return null;
+  try {
+    await member.roles.remove(id, 'Gate: đã thành thành viên, gỡ role khách');
+    return null;
+  } catch (err) {
+    return `⚠️ Chưa gỡ được role khách <@&${id}> (${err.message}): gỡ tay.`;
+  }
+}
+
 async function giveStranger(member, config, guild) {
   const id = config.strangerRoleId;
   if (!id || holds(member, id)) return null;
+  if (holds(member, config.guestRoleId)) return null; // a guest is in the server on purpose: not a stranger
   const problem = roleProblem(guild, id, config, 'stranger');
   if (problem) return `⚠️ Không gán lại được role người lạ <@&${id}>: ${PROBLEM_TEXT[problem]}.`;
   try {
@@ -446,6 +532,8 @@ async function grantMembership(interaction, request, config, by) {
   else if (!classRole) notes.push(`ℹ️ Không có role nào tên phái **${ui.safe(plainClass(request.className) || request.className, 40)}** nên chưa gán role phái.`);
   const strangerNote = await dropStranger(member, config);
   if (strangerNote) notes.push(strangerNote);
+  const guestNote = await dropGuest(member, config);
+  if (guestNote) notes.push(guestNote);
 
   // 4. link + class. The name is checked again right before saving: if somebody took it since step 1 the link is NOT taken over (the roles
   // stay approved, the card says so). Nothing here may stop the member from being told.
@@ -639,6 +727,15 @@ async function handle(interaction, parts) {
     case 'swguest':
       await interaction.deferUpdate();
       return interaction.editReply(ui.ephemeral(GUEST_GONE));
+    case 'gst':
+      await interaction.deferReply(eph1);
+      return onGuest(interaction);
+    case 'gyes':
+      await interaction.deferUpdate();
+      return onGuestJoin(interaction);
+    case 'gback':
+      await interaction.deferUpdate();
+      return interaction.editReply(ui.ephemeral('Đã quay lại. Bấm một nút ở bảng cổng vào để chọn lại.'));
     case 'back':
       await interaction.deferUpdate();
       return interaction.editReply(await pickerView(interaction));

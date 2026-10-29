@@ -5,7 +5,7 @@ const { MessageFlags, ModalBuilder, LabelBuilder, TextInputBuilder, TextInputSty
 const gameRoster = require('../../services/gameRosterService');
 const guildConfigService = require('../../services/guildConfigService');
 const { memberInfo } = require('../../services/rosterService');
-const { buildPicker, linkLine, LABELS } = require('../ui/gameName');
+const { buildPicker, linkLine, meLine, LABELS } = require('../ui/gameName');
 const { invalidateGameNames } = require('../gameNames');
 const { ensureMembers } = require('../memberCache');
 const { scheduleSync } = require('../sheetSync');
@@ -41,6 +41,7 @@ const coolRefused = (interaction, source) => logEvent('gn', 'link', { ...ixCtx(i
 function resetState({ now } = {}) {
   lastChange.clear();
   notified.clear();
+  uidSaves.clear();
   clock = now || (() => Date.now());
 }
 
@@ -212,6 +213,75 @@ async function onFreeSubmit(interaction) {
   return interaction.editReply(await view(interaction, resultOf(res, { roster })));
 }
 
+// 🆔 Nhập ID game: the member's own in-game ID for the character they are linked to (a manager fixes a wrong one with 🆔 ID game).
+function uidModal() {
+  return new ModalBuilder()
+    .setCustomId('gn:uidModal')
+    .setTitle('Nhập ID game')
+    .addLabelComponents(
+      new LabelBuilder()
+        .setLabel('ID nhân vật trong game')
+        .setDescription('Chỉ chữ số, 5 đến 20 số (xem trong game, mục thông tin nhân vật).')
+        .setTextInputComponent(new TextInputBuilder().setCustomId('uid').setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(gameRoster.GAME_UID_MAX))
+    );
+}
+
+// At most UID_SAVES_PER_HOUR saved IDs per member per rolling hour (in memory; a restart forgets it).
+const UID_SAVES_PER_HOUR = 3;
+const uidSaves = new Map(); // "guild:user" -> [timestamps]
+function uidBlockedUntil(key, now = clock()) {
+  const list = (uidSaves.get(key) || []).filter((t) => t > now - 3600 * 1000);
+  if (list.length) uidSaves.set(key, list);
+  else uidSaves.delete(key);
+  return list.length >= UID_SAVES_PER_HOUR ? list[0] + 3600 * 1000 : null;
+}
+
+// Best effort: the managers see every ID a member typed themself.
+async function notifyUid(interaction, uid, name) {
+  try {
+    const config = await guildConfigService.getConfigOrDefault(interaction.guildId);
+    if (!config || !config.adminChannelId) return;
+    const channel = await interaction.client.channels.fetch(config.adminChannelId);
+    await channel.send({ content: `🆔 <@${interaction.user.id}> tự nhập ID game ${uid} cho nhân vật ${escapeMarkdown(name)}.`, allowedMentions: { parse: [] } });
+  } catch (err) {
+    console.warn('[gn] cannot notify the admin channel of an ID:', err.message);
+  }
+}
+
+async function onUidSubmit(interaction) {
+  const reply = (text) => interaction.editReply({ content: text, allowedMentions: { parse: [] } });
+  const key = `${interaction.guildId}:${interaction.user.id}`;
+  const until = uidBlockedUntil(key);
+  if (until) {
+    logEvent('gn', 'game_uid', { ...ixCtx(interaction), ok: false, reason: 'rate' });
+    return reply(`⏳ Bạn đã nhập ID nhiều lần, thử lại sau <t:${Math.ceil(until / 1000)}:R>.`);
+  }
+  const link = await gameRoster.getLink(interaction.guildId, interaction.user.id);
+  if (!link) {
+    logEvent('gn', 'game_uid', { ...ixCtx(interaction), ok: false, reason: 'not_linked' });
+    return reply(`Bạn chưa liên kết nhân vật — bấm ${LABELS.open} trước.`);
+  }
+  const checked = await gameRoster.checkGameUid(interaction.guildId, interaction.fields.getTextInputValue('uid'), { exceptName: link.gameName, exceptId: link.characterId });
+  if (!checked.error && !checked.uid) checked.error = 'Cần nhập ID nhân vật trong game.';
+  if (checked.error) {
+    logEvent('gn', 'game_uid', { ...ixCtx(interaction), ok: false, reason: 'refused' });
+    return reply(`⚠️ ${checked.error}`);
+  }
+  // the same transactional claim as the gate: a clash (even one that appeared a moment ago) saves nothing
+  const got = await gameRoster.claimGameUid(interaction.guildId, link.gameName, checked.uid, { characterId: link.characterId, by: interaction.user.id });
+  if (got.status === 'clash') {
+    logEvent('gn', 'game_uid', { ...ixCtx(interaction), ok: false, reason: 'clash' });
+    return reply(`⚠️ ${got.text}`);
+  }
+  if (got.status === 'set') {
+    uidSaves.set(key, [...(uidSaves.get(key) || []), clock()]);
+    changed(interaction);
+    await notifyUid(interaction, checked.uid, link.gameName);
+  }
+  logEvent('gn', 'game_uid', { ...ixCtx(interaction), ok: true, result: got.status });
+  return reply(`✅ Đã lưu ID game **${checked.uid}** cho nhân vật **${escapeMarkdown(link.gameName)}**.`);
+}
+
 async function onUnlink(interaction) {
   const roster = await gameRoster.latest(interaction.guildId);
   if (cooling(interaction.user.id)) {
@@ -236,7 +306,7 @@ async function onUnlink(interaction) {
   return interaction.editReply(await view(interaction, { note, roster, compact }));
 }
 
-// gn:open | gn:change | gn:me | gn:p:<page>:<ver> | gn:pick:<page>:<ver> | gn:free | gn:freeModal | gn:unlink
+// gn:open | gn:change | gn:me | gn:p:<page>:<ver> | gn:pick:<page>:<ver> | gn:free | gn:freeModal | gn:unlink | gn:uid | gn:uidModal
 async function handle(interaction, parts) {
   switch (parts[1]) {
     case 'open':
@@ -247,7 +317,7 @@ async function handle(interaction, parts) {
       return interaction.editReply(await view(interaction, { src: 'change' }));
     case 'me': {
       await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-      return interaction.editReply({ content: linkLine(await gameRoster.getLink(interaction.guildId, interaction.user.id)), allowedMentions: { parse: [] } });
+      return interaction.editReply({ content: meLine(await gameRoster.getLink(interaction.guildId, interaction.user.id)), allowedMentions: { parse: [] } });
     }
     case 'p': {
       await interaction.deferUpdate();
@@ -265,6 +335,11 @@ async function handle(interaction, parts) {
       if (typeof interaction.isFromMessage === 'function' && interaction.isFromMessage()) await interaction.deferUpdate();
       else await interaction.deferReply({ flags: MessageFlags.Ephemeral });
       return onFreeSubmit(interaction);
+    case 'uid':
+      return interaction.showModal(uidModal());
+    case 'uidModal': // opened from the public panel: always a new ephemeral reply
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      return onUidSubmit(interaction);
     case 'unlink':
       await interaction.deferUpdate();
       return onUnlink(interaction);

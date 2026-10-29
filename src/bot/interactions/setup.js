@@ -12,7 +12,7 @@ const { postOrUpdateEventPanel } = require('../eventPanel');
 const { eventAdminChannelOf } = require('../../services/eventService');
 const { mailboxReady, loadPublicKey, keyFingerprint } = require('../../services/mailService');
 const { postOrUpdateGatePanel } = require('../gatePanel');
-const { gateHealth } = require('../gateRoles');
+const { gateHealth, roleProblem, PROBLEM_TEXT } = require('../gateRoles');
 const { buildWelcomeModal, readWelcomeModal } = require('../ui/gateSetup');
 const { inboxOf } = require('./mailbox');
 const { NO_PERMISSION, eph } = require('./common');
@@ -56,7 +56,7 @@ async function setupView(interaction, config, note, view = null) {
 }
 
 // setup:announce | setup:admin | setup:roles | setup:member | setup:postall (📌 Đăng tất cả) | setup:featview | setup:features (the 🧩 Tính năng select) | setup:advview (⚙️ Nâng cao) | setup:post | setup:gnview | setup:main | setup:gnchan | setup:gnpost
-// | setup:gateview | setup:gatechan | setup:gateadmin | setup:gatestranger | setup:gatetoggle | setup:gateauto | setup:gatepost | setup:gatewelcome (+ modal gatewelcomeModal) (the 🚪 Cổng vào sub-view)
+// | setup:gateview | setup:gatechan | setup:gateadmin | setup:gatestranger | setup:gateguestrole | setup:gatetoggle | setup:gateauto | setup:gatepost | setup:gatewelcome (+ modal gatewelcomeModal) (the 🚪 Cổng vào sub-view)
 // | setup:mbview | setup:mbchan | setup:mbinbox | setup:mbpost (the 📮 Hòm thư sub-view) | setup:evview | setup:evchan | setup:evadmin | setup:evpost (the 🎉 Sự kiện sub-view)
 // 📄 Google Doc submit: empty = disconnect; else the id is checked (the bot can read it) before it is saved, then the Doc is written at once.
 // -> the note shown under the 🎉 Sự kiện view.
@@ -227,12 +227,30 @@ async function handle(interaction, parts) {
       config = await updateConfig(interaction.guildId, { gateChannelId: values[0] || null });
       logEvent('setup', 'channel_set', { ...ixCtx(interaction), select: 'gatechan', set: Boolean(values[0]) });
       break;
+    case 'gateguestrole': {
+      view = 'gate';
+      // the guest role is handed out on a click-and-approve: it must be safe like the other gate roles (checked here, and again by the health lines)
+      const problem = values[0] ? roleProblem(interaction.guild, values[0], config, 'guest') : null;
+      if (problem && problem !== 'no_manage_roles' && problem !== 'no_bot') {
+        note = `⚠️ Role khách <@&${values[0]}> chưa lưu: ${PROBLEM_TEXT[problem]}.`;
+        logEvent('setup', 'channel_set', { ...ixCtx(interaction), select: 'gateguestrole', set: false, problem });
+        break;
+      }
+      config = await updateConfig(interaction.guildId, { guestRoleId: values[0] || null });
+      logEvent('setup', 'channel_set', { ...ixCtx(interaction), select: 'gateguestrole', set: Boolean(values[0]) });
+      note = values[0] ? '🤝 Đã lưu role khách. Bấm 📌 để bảng cổng vào hiện nút Khách.' : '🤝 Đã tắt nút Khách. Bấm 📌 để bảng cổng vào cập nhật.';
+      break;
+    }
     case 'gateguest': // retired role selects of older /setup messages: nothing is saved, the gate view is just redrawn
     case 'gatepending':
       view = 'gate';
       break;
     case 'gatestranger':
       view = 'gate';
+      if (values[0] && values[0] === config.guestRoleId) {
+        note = `⚠️ Role người lạ <@&${values[0]}> chưa lưu: ${PROBLEM_TEXT.guest_same_as_stranger}.`;
+        break;
+      }
       config = await updateConfig(interaction.guildId, { strangerRoleId: values[0] || null });
       logEvent('setup', 'channel_set', { ...ixCtx(interaction), select: 'gatestranger', set: Boolean(values[0]) });
       break;

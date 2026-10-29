@@ -608,6 +608,16 @@ async function characterFor(guildId, name) {
 const forgetUnlinkedTyped = (guildId) =>
   db.q(`delete from game_characters g where g.guild_id = $1 and g.origin = 'typed' and not exists (select 1 from character_links l where l.character_id = g.id)`, [guildId]);
 
+// A member who typed the ID of a character themself (game_uid_by = their Discord id) loses it when their self link leaves that character -
+// else link, stamp any ID, unlink and repeat would plant IDs on roster names nobody has claimed. `cond` filters the links being
+// removed or moved (aliases l = character_links, m = discord_members, g = game_characters; $1 = guild, params from $2).
+const releaseOwnUid = (guildId, cond, params = []) =>
+  db.q(
+    `update game_characters g set game_uid = null, game_uid_by = null from character_links l join discord_members m on m.id = l.member_id
+     where l.character_id = g.id and g.guild_id = $1 and g.game_uid_by = m.discord_id and ${cond}`,
+    [guildId, ...params]
+  );
+
 // Points member `memberId` at character `characterId` (its old link, if any, is replaced).
 async function writeLink(guildId, memberId, characterId, source, linkedBy = null) {
   await db.q('delete from character_links where member_id = $1', [memberId]);
@@ -627,7 +637,9 @@ async function setMappings(guildId, pairs) {
       for (const p of byName.values()) {
         const mid = await memberStore.memberId(guildId, p.discordId, p.displayName || undefined);
         const charId = await characterFor(guildId, p.gameName);
-        // the newest pair takes the name: whoever holds a character with that name key loses it
+        // the newest pair takes the name: whoever holds a character with that name key loses it (and the ID they typed on it)
+        await releaseOwnUid(guildId, 'l.member_id <> $2 and g.name_key = $3', [mid, storedKey(p.gameName)]);
+        await releaseOwnUid(guildId, 'l.member_id = $2 and l.character_id <> $3', [mid, charId]); // the character this person leaves
         await db.q(
           `delete from character_links l using game_characters g where l.character_id = g.id and l.member_id <> $2 and g.guild_id = $1 and g.name_key = $3`,
           [guildId, mid, storedKey(p.gameName)]
@@ -657,11 +669,11 @@ const failWith = (code, message, extra) => Object.assign(new Error(message), { c
 // The member's current link -> { gameName, source } or null.
 async function getLink(guildId, discordId) {
   const row = await db.one(
-    `select g.name, l.source from character_links l join discord_members m on m.id = l.member_id join game_characters g on g.id = l.character_id
+    `select g.id as character_id, g.name, g.game_uid, l.source from character_links l join discord_members m on m.id = l.member_id join game_characters g on g.id = l.character_id
      where m.guild_id = $1 and m.discord_id = $2`,
     [guildId, discordId]
   );
-  return row ? { gameName: row.name, source: row.source } : null;
+  return row ? { gameName: row.name, source: row.source, gameUid: row.game_uid || null, characterId: row.character_id } : null;
 }
 
 // The member links themself with a game name: `free` = typed by hand (source selfFree, unverified), else a roster name (source self).
@@ -687,7 +699,9 @@ async function selfLink(guildId, discordId, gameName, { free = false, displayNam
         }
       }
       const mid = await memberStore.memberId(guildId, discordId, displayName || undefined);
-      await writeLink(guildId, mid, await characterFor(guildId, name), source);
+      const target = await characterFor(guildId, name);
+      await releaseOwnUid(guildId, 'l.member_id = $2 and l.character_id <> $3', [mid, target]);
+      await writeLink(guildId, mid, target, source);
       await forgetUnlinkedTyped(guildId);
     });
   } catch (err) {
@@ -704,6 +718,7 @@ async function selfUnlink(guildId, discordId) {
   if (!link) return false;
   if (link.source === 'admin') throw failWith('ADMIN_LOCKED', 'Liên kết này do quản lý gán — nhờ quản lý gỡ.');
   const removed = await db.tx(async () => {
+    await releaseOwnUid(guildId, `m.discord_id = $2 and l.source in ('self', 'selfFree')`, [discordId]);
     const rows = await db.q(
       `delete from character_links l using discord_members m where l.member_id = m.id and m.guild_id = $1 and m.discord_id = $2 and l.source in ('self', 'selfFree') returning l.character_id`,
       [guildId, discordId]
@@ -720,6 +735,7 @@ async function removeMappings(guildId, discordIds) {
   if (!discordIds.length) return 0;
   try {
     return await db.tx(async () => {
+      await releaseOwnUid(guildId, 'm.discord_id = any($2)', [discordIds]);
       const rows = await db.q(
         `delete from character_links l using discord_members m where l.member_id = m.id and m.guild_id = $1 and m.discord_id = any($2) returning l.character_id`,
         [guildId, discordIds]
@@ -834,10 +850,11 @@ const PENDING_UID_TEXT = 'ID này đang được một người khác dùng đ�
 
 // A member's ID at the gate: -> { uid } | { error } (format, held by another character - departed ones too, or reserved by another
 // pending request). `exceptName`: the character the member picked - an ID it already carries (a manager typed it) is the member's own.
-async function checkGameUid(guildId, input, { exceptName = null } = {}) {
+async function checkGameUid(guildId, input, { exceptName = null, exceptId = null } = {}) {
   const cleaned = cleanGameUid(input);
   if (cleaned.error || !cleaned.uid) return cleaned;
-  const own = exceptName ? await findCharacter(guildId, exceptName) : null;
+  // exceptId (a member's linked character row) wins over the name: a departed row and a live one can share a name key
+  const own = exceptId ? await db.one('select id, game_uid from game_characters where guild_id = $1 and id = $2', [guildId, exceptId]) : exceptName ? await findCharacter(guildId, exceptName) : null;
   if (own && own.game_uid && own.game_uid !== cleaned.uid) return { error: 'Nhân vật này đã có một ID game khác. Nhập đúng ID của nhân vật, hoặc báo quản lý nếu ID cũ bị nhầm.' };
   const holder = await uidHolder(guildId, cleaned.uid, own ? own.id : null);
   if (holder) return { error: uidTakenText(holder) };
@@ -857,7 +874,7 @@ async function setGameUid(guildId, name, input) {
       const holder = await uidHolder(guildId, cleaned.uid, row.id);
       if (holder) return { error: uidTakenText(holder) };
     }
-    await db.q('update game_characters set game_uid = $2 where id = $1', [row.id, cleaned.uid || null]);
+    await db.q('update game_characters set game_uid = $2, game_uid_by = null where id = $1', [row.id, cleaned.uid || null]);
   } catch (err) {
     if (!db.isUniqueViolation(err)) throw err;
     return { error: 'ID game này vừa được nhân vật khác nhận, thử lại.' };
@@ -869,16 +886,18 @@ async function setGameUid(guildId, name, input) {
 // The gate gives an approved applicant's ID to the character the name points at (the same row the link will use; a name nobody has
 // yet becomes a 'typed' character). Runs in one transaction with the row locked, so two approvals cannot both take an ID. A clash
 // never writes anything. -> { status: 'set' | 'same', characterId, created } | { status: 'clash', text }
-async function claimGameUid(guildId, name, uid) {
+// opts.characterId: the row to give the ID to (a member's linked character - the name could also match another row); opts.by: a Discord id
+// when the member typed the ID themself (gn:uid), recorded in game_uid_by so it is taken back with their self link. Null for the gate.
+async function claimGameUid(guildId, name, uid, { characterId = null, by = null } = {}) {
   try {
     const out = await db.tx(async () => {
-      const row = await findCharacter(guildId, name, true);
+      const row = characterId ? await db.one('select id, game_uid from game_characters where guild_id = $1 and id = $2 for update', [guildId, characterId]) : await findCharacter(guildId, name, true);
       if (row && row.game_uid === uid) return { status: 'same', characterId: row.id, created: false };
       if (row && row.game_uid) return { status: 'clash', text: 'Nhân vật này đã có một ID game khác. Báo quản lý nếu ID cũ bị nhầm.' };
       const holder = await uidHolder(guildId, uid, row ? row.id : null);
       if (holder) return { status: 'clash', text: uidTakenText(holder) };
       if (row) {
-        await db.q('update game_characters set game_uid = $2 where id = $1', [row.id, uid]);
+        await db.q('update game_characters set game_uid = $2, game_uid_by = $3 where id = $1', [row.id, uid, by]);
         return { status: 'set', characterId: row.id, created: false };
       }
       const made = await db.one(`insert into game_characters (guild_id, name_key, name, origin, game_uid) values ($1, $2, $3, 'typed', $4) returning id`, [guildId, storedKey(name), String(name).trim(), uid]);
@@ -895,7 +914,7 @@ async function claimGameUid(guildId, name, uid) {
 // Undo a claimGameUid() that set the ID (the approval it belonged to did not finish): the ID is cleared, and a typed row the claim
 // made is removed again (nobody is linked to it yet).
 async function releaseGameUid(guildId, characterId) {
-  await db.q('update game_characters set game_uid = null where guild_id = $1 and id = $2', [guildId, characterId]);
+  await db.q('update game_characters set game_uid = null, game_uid_by = null where guild_id = $1 and id = $2', [guildId, characterId]);
   await db.q(`delete from game_characters g where g.guild_id = $1 and g.id = $2 and g.origin = 'typed' and not exists (select 1 from character_links l where l.character_id = g.id)`, [guildId, characterId]);
   bump(guildId);
 }
@@ -907,7 +926,7 @@ async function renameCharacter(guildId, oldId, newId) {
   let out;
   try {
   out = await db.tx(async () => {
-    const rows = await db.q('select id, name, name_key, left_at, origin, game_uid from game_characters where guild_id = $1 and id = any($2) for update', [guildId, [String(oldId), String(newId)]]);
+    const rows = await db.q('select id, name, name_key, left_at, origin, game_uid, game_uid_by from game_characters where guild_id = $1 and id = any($2) for update', [guildId, [String(oldId), String(newId)]]);
     const old = rows.find((r) => String(r.id) === String(oldId));
     const neu = rows.find((r) => String(r.id) === String(newId));
     if (!old || !neu || String(oldId) === String(newId)) return { error: 'Không tìm thấy nhân vật (danh sách vừa đổi?). Mở lại ✏️ Đổi tên.' };
@@ -923,20 +942,22 @@ async function renameCharacter(guildId, oldId, newId) {
     // the in-game ID follows the character: the old row's, else the one the new row had. Cleared on both rows first, so the
     // unique index never sees two holders; dropped (not an error) when some other character holds it.
     let uid = old.game_uid || neu.game_uid || null;
+    let uidBy = old.game_uid ? old.game_uid_by : neu.game_uid_by; // who typed it travels with the ID
     const notes = [];
     if (old.game_uid && neu.game_uid && old.game_uid !== neu.game_uid) notes.push(`ℹ️ Hai dòng có ID game khác nhau: giữ **${old.game_uid}** (tên cũ), bỏ **${neu.game_uid}** (tên mới). Sai thì sửa ở 🆔 ID game.`);
-    await db.q('update game_characters set game_uid = null where id = any($1)', [[old.id, neu.id]]);
+    await db.q('update game_characters set game_uid = null, game_uid_by = null where id = any($1)', [[old.id, neu.id]]);
     if (uid && (await db.one('select id from game_characters where guild_id = $1 and game_uid = $2 and id <> all($3)', [guildId, uid, [old.id, neu.id]]))) {
       notes.push(`ℹ️ ID game **${uid}** đang thuộc nhân vật khác nên không chuyển sang tên mới. Kiểm tra ở 🆔 ID game.`);
       uid = null;
     }
+    if (!uid) uidBy = null;
     await db.q('delete from game_characters where id = $1', [neu.id]); // first: the active name index would refuse two rows with that name
     await db.q(
       `update game_characters set name = $2, name_key = $3, rank = $4, class_name = $5, days_in_guild = $6, status = $7, off_days = $8,
-         last_import_id = $9, position = $10, origin = 'roster', left_at = null, game_uid = $12,
+         last_import_id = $9, position = $10, origin = 'roster', left_at = null, game_uid = $12, game_uid_by = $13,
          old_names = case when $11 = any(old_names) or $11 = $2 then old_names else array_append(old_names, $11) end
        where id = $1`,
-      [old.id, n.name, n.name_key, n.rank, n.class_name, n.days_in_guild, n.status, n.off_days, n.last_import_id, n.position, old.name, uid]
+      [old.id, n.name, n.name_key, n.rank, n.class_name, n.days_in_guild, n.status, n.off_days, n.last_import_id, n.position, old.name, uid, uidBy]
     );
     return { from: old.name, to: n.name, ...(notes.length ? { note: notes.join(String.fromCharCode(10)) } : {}) };
   });

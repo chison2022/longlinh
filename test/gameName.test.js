@@ -96,9 +96,9 @@ beforeEach(() => {
 });
 
 describe('the persistent panel', () => {
-  it('has the two buttons with the owner wording, a short explanation, and passes the V2 limits', () => {
+  it('has the three buttons with the owner wording, a short explanation, and passes the V2 limits', () => {
     const v2 = assertV2Message(buildGnPanel());
-    assert.deepEqual(v2.buttons.map((b) => [b.custom_id, b.label]), [['gn:open', '🎮 Chọn nhân vật của tôi'], ['gn:me', '👤 Xem nhân vật đã liên kết']]);
+    assert.deepEqual(v2.buttons.map((b) => [b.custom_id, b.label]), [['gn:open', '🎮 Chọn nhân vật của tôi'], ['gn:me', '👤 Xem nhân vật đã liên kết'], ['gn:uid', '🆔 Nhập ID game']]);
     assert.match(v2.text, /Chọn nhân vật trong game của bạn để quản lý xếp đội đúng người\. Đổi lại lúc nào cũng được\./);
     assert.equal(LABELS.open, '🎮 Chọn nhân vật của tôi');
   });
@@ -234,7 +234,131 @@ describe('the ephemeral picker', () => {
     const { i, log } = interaction();
     await gnHandler.handle(i, ['gn', 'me']);
     assert.equal(log[0][0], 'deferReply');
-    assert.equal(last(log).content, '✅ Bạn đang là **Alpha** trong game.\n-# quản lý gán');
+    assert.equal(last(log).content, '✅ Bạn đang là **Alpha** trong game.\n-# quản lý gán\n🆔 Chưa có ID game — bấm 🆔 Nhập ID game');
+    link = { gameName: 'Alpha', source: 'self', gameUid: '123456' };
+    const again = interaction();
+    await gnHandler.handle(again.i, ['gn', 'me']);
+    assert.equal(last(again.log).content, '✅ Bạn đang là **Alpha** trong game.\n-# bạn tự chọn\n🆔 ID game: 123456');
+    link = null;
+    const none = interaction();
+    await gnHandler.handle(none.i, ['gn', 'me']);
+    assert.equal(last(none.log).content, 'Bạn **chưa liên kết** nhân vật nào trong game.');
+  });
+});
+
+describe('gn:uid: the member enters the in-game ID of the linked character', () => {
+  let held; // uid -> holder text (refused by checkGameUid), as the real check would
+  let claimed; // [[name, uid]]
+  let claimOutcome;
+  let claimOpts;
+  beforeEach(() => {
+    held = new Map();
+    claimed = [];
+    claimOutcome = { status: 'set', characterId: 7, created: false };
+    gameRoster.checkGameUid = async (_g, input, { exceptName = null } = {}) => {
+      const c = gameRoster.cleanGameUid(input);
+      if (c.error || !c.uid) return c;
+      if (link && link.gameUid && link.gameUid !== c.uid && exceptName === link.gameName) return { error: 'Nhân vật này đã có một ID game khác. Nhập đúng ID của nhân vật, hoặc báo quản lý nếu ID cũ bị nhầm.' };
+      return held.has(c.uid) ? { error: held.get(c.uid) } : c;
+    };
+    claimOpts = [];
+    gameRoster.claimGameUid = async (_g, name, uid, opts) => (claimed.push([name, uid]), claimOpts.push(opts), claimOutcome);
+  });
+  const submit = async (uid) => {
+    const x = interaction({ extra: { fields: { getTextInputValue: () => uid } } });
+    await gnHandler.handle(x.i, ['gn', 'uidModal']);
+    return x;
+  };
+
+  it('the panel button opens a modal with one required field (digits, 5 to 20)', async () => {
+    const { i, log } = interaction();
+    await gnHandler.handle(i, ['gn', 'uid']);
+    const modal = log.find((l) => l[0] === 'showModal')[1].toJSON();
+    assert.equal(modal.custom_id, 'gn:uidModal');
+    assert.equal(modal.components.length, 1);
+    assert.equal(modal.components[0].component.required, true);
+    assert.equal(modal.components[0].component.max_length, 20);
+    assert.match(modal.components[0].description, /Chỉ chữ số, 5 đến 20 số/);
+  });
+  it('not linked: told to pick a character first, nothing saved', async () => {
+    const { log } = await submit('123456');
+    assert.equal(log[0][0], 'deferReply');
+    assert.match(last(log).content, /Bạn chưa liên kết nhân vật — bấm 🎮 Chọn nhân vật của tôi trước\./);
+    assert.deepEqual(claimed, []);
+  });
+  it('a bad format or an empty ID is refused with the gate wording', async () => {
+    link = { gameName: 'Alpha', source: 'self' };
+    assert.match(last((await submit('12ab')).log).content, /^⚠️ ID game chỉ gồm chữ số/);
+    assert.match(last((await submit('   ')).log).content, /Cần nhập ID/);
+    assert.deepEqual(claimed, []);
+  });
+  it('an ID another character holds (or a pending request reserves), and a different ID on the linked character, are refused', async () => {
+    link = { gameName: 'Alpha', source: 'self' };
+    held.set('555555', 'ID game này đang thuộc nhân vật **Beta**.');
+    assert.match(last((await submit('555555')).log).content, /đang thuộc nhân vật \*\*Beta\*\*/);
+    held.set('666666', 'ID này đang được một người khác dùng để xin vào bang. Kiểm tra lại ID của bạn.');
+    assert.match(last((await submit('666666')).log).content, /xin vào bang/);
+    link = { gameName: 'Alpha', source: 'self', gameUid: '111111' };
+    assert.match(last((await submit('222222')).log).content, /đã có một ID game khác/);
+    assert.deepEqual(claimed, []);
+  });
+  it('the linked character row (id) and the member are passed to the check and the claim; success tells the managers (no pings)', async () => {
+    link = { gameName: 'Alpha', source: 'self', characterId: 42 };
+    const seen = [];
+    const realCheck = gameRoster.checkGameUid;
+    gameRoster.checkGameUid = async (g1, input, opts) => (seen.push(opts), realCheck(g1, input, opts));
+    await submit('123456');
+    assert.deepEqual(seen, [{ exceptName: 'Alpha', exceptId: 42 }]);
+    assert.deepEqual(claimOpts, [{ characterId: 42, by: ME }]);
+    assert.equal(adminSent.length, 1);
+    assert.equal(adminSent[0].content, `🆔 <@${ME}> tự nhập ID game 123456 cho nhân vật Alpha.`);
+    assert.deepEqual(adminSent[0].allowedMentions, { parse: [] });
+  });
+  it('a refused ID or an unchanged one posts nothing to the managers; a closed admin channel does not break the save', async () => {
+    link = { gameName: 'Alpha', source: 'self' };
+    await submit('12ab');
+    claimOutcome = { status: 'same', characterId: 7, created: false };
+    await submit('123456');
+    assert.deepEqual(adminSent, []);
+    claimOutcome = { status: 'set', characterId: 7, created: false };
+    const x = interaction({ extra: { fields: { getTextInputValue: () => '123456' }, client: { channels: { fetch: async () => { throw new Error('Missing Access'); } } } } });
+    await gnHandler.handle(x.i, ['gn', 'uidModal']);
+    assert.match(last(x.log).content, /✅ Đã lưu ID game/);
+  });
+  it('at most 3 saves per member per hour: the 4th is refused with the time, the hour rolls on; refused/unchanged IDs do not count', async () => {
+    let now = Date.parse('2026-10-29T10:00:00Z');
+    gnHandler.resetState({ now: () => now });
+    link = { gameName: 'Alpha', source: 'self' };
+    await submit('12ab'); // refused: not counted
+    for (const uid of ['111111', '222222', '333333']) {
+      assert.match(last((await submit(uid)).log).content, /✅ Đã lưu/);
+      now += 60 * 1000;
+    }
+    const blocked = await submit('444444');
+    const until = Math.ceil((Date.parse('2026-10-29T10:00:00Z') + 3600 * 1000) / 1000);
+    assert.equal(last(blocked.log).content, `⏳ Bạn đã nhập ID nhiều lần, thử lại sau <t:${until}:R>.`);
+    assert.equal(claimed.length, 3);
+    now = Date.parse('2026-10-29T11:00:01Z');
+    assert.match(last((await submit('444444')).log).content, /✅ Đã lưu/);
+  });
+  it('a clash found by the transactional claim saves nothing and is reported', async () => {
+    link = { gameName: 'Alpha', source: 'self' };
+    claimOutcome = { status: 'clash', text: 'ID game này vừa được nhân vật khác nhận.' };
+    assert.match(last((await submit('123456')).log).content, /^⚠️ ID game này vừa được nhân vật khác nhận\./);
+  });
+  it('success: the ID goes to the linked character through the claim, the member is told, and a gn.game_uid line is logged', async () => {
+    link = { gameName: 'Alpha', source: 'self' };
+    const lines = [];
+    const eventLog = require('../src/eventLog');
+    eventLog.setSink((l) => lines.push(JSON.parse(l)));
+    try {
+      const { log } = await submit(' 123456 ');
+      assert.deepEqual(claimed, [['Alpha', '123456']]);
+      assert.equal(last(log).content, '✅ Đã lưu ID game **123456** cho nhân vật **Alpha**.');
+      assert.deepEqual(lines.filter((l) => l.area === 'gn' && l.ev === 'game_uid').map((l) => [l.ok, l.result]), [[true, 'set']]);
+    } finally {
+      eventLog.setSink(null);
+    }
   });
 });
 

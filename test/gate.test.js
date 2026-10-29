@@ -366,21 +366,28 @@ describe('the /setup 🚪 Cổng vào sub-view and its health checks', () => {
     const moving = buildSetupView(config, null, { moveEvent: { _id: oid(5), title: 'T', channelId: 'c-war' } }).components.at(-1).toJSON().components.map((c) => c.custom_id);
     assert.deepEqual(moving, ['setup:postall', 'setup:featview', 'setup:advview', `adm:move:${oid(5)}`]);
   });
-  it('shows only the gate channel + approval channel selects, ✏️ Lời chào, toggle, post, back (no Khách / Chờ duyệt role selects); passes the Discord limits', () => {
+  it('shows the gate channel + approval channel + Người lạ + Khách role selects, ✏️ Lời chào, toggle, post, back (no Chờ duyệt select); passes the Discord limits', () => {
     const guild = guildFor({});
     const v = buildSetupView(config, null, { view: 'gate', guild, health: gateHealth(config, guild) });
     const { rows } = assertMessage(v);
-    assert.deepEqual(rows.map((r) => r.components.map((c) => c.custom_id)), [['setup:gatechan'], ['setup:gateadmin'], ['setup:gatestranger'], ['setup:gatewelcome', 'setup:gateauto', 'setup:gatetoggle', 'setup:gatepost', 'setup:main']]);
-    assert.ok(!JSON.stringify(rows).includes('gateguest') && !JSON.stringify(rows).includes('gatepending'));
+    assert.deepEqual(rows.map((r) => r.components.map((c) => c.custom_id)), [['setup:gatechan'], ['setup:gateadmin'], ['setup:gatestranger'], ['setup:gateguestrole'], ['setup:gatewelcome', 'setup:gateauto', 'setup:gatetoggle', 'setup:gatepost', 'setup:main']]);
+    assert.ok(!JSON.stringify(rows).includes('"setup:gateguest"') && !JSON.stringify(rows).includes('gatepending'), 'the retired selects stay retired');
+    const guestRow = rows[3].components[0];
+    assert.deepEqual([guestRow.min_values, guestRow.max_values, guestRow.placeholder], [0, 1, 'Role khách (người bấm 🤝 Khách tự nhận) — để trống = không có nút Khách']);
     assert.match(v.content, /🟢 Cổng đang \*\*BẬT\*\*/);
     assert.match(v.content, /Ẩn các kênh khác với @everyone \(chỉ kênh welcome cho xem\); role thành viên xem các kênh còn lại\./);
-    assert.ok(!/Khách|Chờ duyệt/.test(v.content), 'no guest / pending text');
-    const legacy = buildSetupView({ ...config, guestRoleId: 'r-guest', pendingRoleId: 'r-pending', gateWelcomeGuest: 'x' }, null, { view: 'gate', guild, health: gateHealth(config, guild) });
+    assert.ok(!/Chờ duyệt/.test(v.content), 'no pending text');
+    assert.match(v.content, /🤝 Nút Khách: \*\*TẮT\*\*/);
+    const legacy = buildSetupView({ ...config, pendingRoleId: 'r-pending', gateWelcomeGuest: 'x' }, null, { view: 'gate', guild, health: gateHealth(config, guild) });
     assert.equal(legacy.content, v.content, 'the unused legacy fields change nothing');
+    const withGuest = buildSetupView({ ...config, guestRoleId: 'r-guest' }, null, { view: 'gate', guild, health: gateHealth({ ...config, guestRoleId: 'r-guest' }, guild) });
+    assert.match(withGuest.content, /🤝 Nút Khách: \*\*BẬT\*\* .*<@&r-guest>/);
+    assert.match(withGuest.content, /Role \*\*Khách\*\*: <@&r-guest>/);
+    assert.deepEqual(assertMessage(withGuest).rows[3].components[0].default_values, [{ id: 'r-guest', type: 'role' }]);
     const off = buildSetupView({ ...config, gateEnabled: false, gateChannelId: null }, null, { view: 'gate', guild });
     const offRows = assertMessage(off).rows;
-    assert.equal(offRows[3].components[2].label, '▶ Bật cổng');
-    assert.equal(offRows[3].components[3].disabled, true, 'nothing to post without a gate channel');
+    assert.equal(offRows[4].components[2].label, '▶ Bật cổng');
+    assert.equal(offRows[4].components[3].disabled, true, 'nothing to post without a gate channel');
     assert.match(off.content, /⚪ Cổng đang \*\*TẮT\*\*/);
   });
   it('the admin-channel select falls back to the admin channel and says so', () => {
@@ -406,14 +413,21 @@ describe('the /setup 🚪 Cổng vào sub-view and its health checks', () => {
     const equal = gateHealth(config, guildFor({ botPosition: 2, rolePositions: { 'r-member': 2, 'r-ty': 1 } })).filter((h) => !h.ok);
     assert.equal(equal.length, 1, 'equal position is not above');
   });
-  it('warns when the member role is not set / was deleted; no line asks for a Khách / Chờ duyệt role, and legacy ones are never checked', () => {
+  it('warns when the member role is not set / was deleted; no line asks for a role, the Chờ duyệt one is never checked, a guest role is checked like the others', () => {
     assert.ok(gateHealth({ ...config, memberRoleId: null }, guildFor({})).some((h) => !h.ok && /role thành viên/.test(h.text)));
     assert.ok(gateHealth({ ...config, memberRoleId: 'r-gone' }, guildFor({})).some((h) => !h.ok && /không còn trong server/.test(h.text)));
     const text = (cfg) => gateHealth(cfg, guildFor({})).map((h) => h.text).join('\n');
     assert.ok(!/Khách|Chờ duyệt/.test(text(config)));
-    const legacy = { ...config, guestRoleId: 'r-gone', pendingRoleId: 'r-member' };
-    assert.equal(text(legacy), text(config), 'a missing or duplicate legacy role raises nothing');
+    const legacy = { ...config, pendingRoleId: 'r-member' };
+    assert.equal(text(legacy), text(config), 'a duplicate legacy role raises nothing');
     assert.deepEqual(gateHealth(legacy, guildFor({})).filter((h) => !h.ok), []);
+    const warn = (cfg, opts = {}) => gateHealth(cfg, guildFor(opts)).filter((h) => !h.ok).map((h) => h.text).join('\n');
+    assert.match(warn({ ...config, guestRoleId: 'r-gone' }), /Role \*\*Khách\*\* <@&r-gone>: role không còn trong server/);
+    assert.match(warn({ ...config, guestRoleId: 'r-member' }), /Role \*\*Khách\*\*.*trùng role Thành viên/);
+    assert.match(warn({ ...config, guestRoleId: 'r-guest' }, { botPosition: 1 }), /Role \*\*Khách\*\*.*DƯỚI/);
+    assert.match(warn({ ...config, guestRoleId: GUILD }), /Role \*\*Khách\*\*.*@everyone/);
+    assert.match(warn({ ...config, guestRoleId: 'r-ty', adminRoleIds: ['r-ty'] }), /Role \*\*Khách\*\*.*role quản lý/);
+    assert.equal(warn({ ...config, guestRoleId: 'r-guest' }), '');
   });
   it('warns when @everyone cannot view the gate channel (and when it can send there)', () => {
     const hidden = gateHealth(config, guildFor({ everyoneView: false }));
@@ -451,6 +465,7 @@ describe('the /setup 🚪 Cổng vào sub-view and its health checks', () => {
     assert.equal(writes.length, writesBefore);
     await runFresh('gatechan', ['c-gate']);
     assert.deepEqual(writes.pop(), { gateChannelId: 'c-gate' });
+    config.adminRoleIds = [];
     await runFresh('gateadmin', ['c-war']);
     assert.deepEqual(writes.pop(), { gateAdminChannelId: 'c-war' });
   });
@@ -825,9 +840,7 @@ describe('✅ Duyệt', () => {
 
   it('adds the member role (and the class role), removes NOTHING even when the applicant holds legacy Khách / Chờ duyệt roles; saves the admin link + class; DMs the welcome; edits the card green with who approved', async () => {
     const { w, request, card } = await sendRequest({ classIndex: 1 }); // Tố Vấn: no such role in this guild -> skipped with a note
-    config.guestRoleId = 'r-guest'; // legacy fields: never read, so the roles the applicant holds are left alone
-    config.pendingRoleId = 'r-pending';
-    w.guild.members.cache.get(USER).roles.cache.set('r-guest', w.roles.get('r-guest'));
+    config.pendingRoleId = 'r-pending'; // legacy field: never read, so the role the applicant holds is left alone
     w.guild.members.cache.get(USER).roles.cache.set('r-pending', w.roles.get('r-pending'));
     const before = w.rec.roleCalls.length;
     const { i, log } = press(w, request, card);
@@ -1046,6 +1059,295 @@ describe('only managers press the card buttons', () => {
   });
 });
 
+describe('🤝 Khách: the self-serve guest path', () => {
+  const panelOf = (cfg) => ui.buildGatePanel({ guildName: 'Bang Thử Nghiệm', guest: Boolean(cfg.guestRoleId) });
+  beforeEach(() => {
+    config.guestRoleId = 'r-guest';
+  });
+  const click = async (w, id, opts = {}) => {
+    const x = interactionOf(w, opts);
+    await gate.handle(x.i, ['gate', id]);
+    return x;
+  };
+
+  it('the panel shows a secondary 🤝 Khách button and the hint only while a guest role is set; without it the panel is unchanged', () => {
+    const on = assertV2Message(panelOf(config));
+    assert.deepEqual(on.buttons.map((b) => [b.custom_id, b.label, b.style]), [['gate:member', '⚔️ Thành viên bang Bang Thử Nghiệm', 1], ['gate:gst', '🤝 Khách', 2]]);
+    assert.match(on.text, /-# Không chơi trong bang \(bạn bè, khách\)\? Bấm Khách để vào server ngay, không cần duyệt\./);
+    const off = assertV2Message(panelOf({ ...config, guestRoleId: null }));
+    assert.deepEqual(off.buttons.map((b) => b.custom_id), ['gate:member']);
+    assert.ok(!/Khách/.test(off.text));
+    assert.deepEqual(JSON.stringify(ui.buildGatePanel({ guildName: 'Bang Thử Nghiệm' })), JSON.stringify(panelOf({ ...config, guestRoleId: null })));
+    assertV2Message(require('../src/bot/ui/common').v2Create(panelOf(config)), { forCreate: true });
+  });
+  it('postOrUpdateGatePanel draws the Khách button from guestRoleId', async () => {
+    guildConfigService.updateConfig = async () => ({});
+    delete require.cache[require.resolve('../src/bot/gatePanel')];
+    const { postOrUpdateGatePanel: post } = require('../src/bot/gatePanel');
+    const w = world();
+    await post(w.client, { ...config, guildId: GUILD });
+    assert.ok(JSON.stringify(w.rec.sent[0][1]).includes('gate:gst'));
+    const w2 = world();
+    await post(w2.client, { ...config, guildId: GUILD, guestRoleId: null });
+    assert.ok(!JSON.stringify(w2.rec.sent[0][1]).includes('gate:gst'));
+  });
+  it('🤝 Khách only asks to confirm (ephemeral): no role, no request, no card yet; ↩ Quay lại ends it', async () => {
+    const w = world({ members: [[ADMIN, 'Quản Lý', []]] });
+    const { log } = await click(w, 'gst');
+    assert.equal(log[0][0], 'deferReply');
+    const v = assertMessage(last(log));
+    assert.match(last(log).content, /Bạn sẽ vào server với vai trò \*\*khách\*\* \(không phải thành viên bang\)\. Thành viên bang thì bấm ⚔️ Thành viên bang\./);
+    assert.deepEqual(v.rows[0].components.map((c) => [c.custom_id, c.label]), [['gate:gyes', '✅ Vào làm khách'], ['gate:gback', '↩ Quay lại']]);
+    assert.deepEqual(w.rec.roleCalls, []);
+    assert.deepEqual(reqs, []);
+    const back = await click(w, 'gback');
+    assert.deepEqual(w.rec.roleCalls, []);
+    assert.match(last(back.log).content, /Đã quay lại/);
+  });
+  it('✅ Vào làm khách gives the guest role only, tells the person, posts an info card to the admin channel, saves no request and sets no cooldown', async () => {
+    const w = world({ members: [[ADMIN, 'Quản Lý', []]] });
+    const { log } = await click(w, 'gyes', { user: NEW_USER, name: 'Bạn Của An' });
+    assert.equal(log[0][0], 'deferUpdate');
+    assert.deepEqual(w.rec.roleCalls.map((c) => c.slice(0, 3)), [['add', NEW_USER, ['r-guest']]]);
+    assert.equal(last(log).content, '🤝 Bạn đã vào server với vai trò khách.');
+    assert.deepEqual(reqs, []);
+    assert.deepEqual(w.rec.dms, []);
+    assert.deepEqual(saved.mappings, []);
+    assert.deepEqual(saved.classes, []);
+    const sent = w.rec.sent.filter((s) => s[0] === 'c-admin');
+    assert.equal(sent.length, 1);
+    const v2 = assertV2Message(sent[0][1], { forCreate: true });
+    assert.equal(v2.buttons.length, 0, 'nothing to decide');
+    assert.match(v2.text, new RegExp(`🤝 <@${NEW_USER}> đã tự vào làm khách`));
+    assert.match(v2.text, /Bạn Của An/);
+    assert.deepEqual(ev('gate.guest_join').map((e) => e.member), [NEW_USER]);
+    // no cooldown, no request: the picker for the member path is open at once
+    const m = await click(w, 'member', { user: NEW_USER });
+    assert.match(last(m.log).content, /Xin vào bang \(1\/3\)/);
+  });
+  it('the info card goes to gateAdminChannelId when set; a card that cannot be posted does not undo the guest role', async () => {
+    config.gateAdminChannelId = 'c-war';
+    const w = world();
+    await click(w, 'gyes');
+    assert.equal(w.rec.sent.filter((s) => s[0] === 'c-war').length, 1);
+    const w2 = world();
+    w2.guild.channels.cache.get('c-war').send = async () => {
+      throw new Error('Missing Access');
+    };
+    const { log, member } = await click(w2, 'gyes', { user: sid(6001) });
+    assert.ok(member.roles.cache.has('r-guest'));
+    assert.equal(last(log).content, '🤝 Bạn đã vào server với vai trò khách.');
+  });
+  it('refused when the person already holds the member role or the guest role, when the gate is off, or when no guest role is set - at both steps', async () => {
+    const w = world();
+    for (const id of ['gst', 'gyes']) {
+      const m = await click(w, id, { user: sid(6101), roleIds: ['r-member'] });
+      assert.match(last(m.log).content, /đã là thành viên bang/);
+      const g1 = await click(w, id, { user: sid(6102), roleIds: ['r-guest'] });
+      assert.match(last(g1.log).content, /đã là khách/);
+    }
+    assert.deepEqual(w.rec.roleCalls, []);
+    config.gateEnabled = false;
+    config.features = { ...(config.features || {}), gate: false };
+    assert.match(last((await click(w, 'gst', { user: sid(6103) })).log).content, /Cổng vào đang tắt/);
+    config.gateEnabled = true;
+    config.features = { ...(config.features || {}), gate: true };
+    config.guestRoleId = null;
+    assert.match(last((await click(w, 'gyes', { user: sid(6104) })).log).content, /Nút Khách đang tắt/);
+    assert.deepEqual(w.rec.roleCalls, []);
+  });
+  it('a guest role the bot cannot hand out (above the bot, or a privileged role) is never given', async () => {
+    const w = world({ botPosition: 1 });
+    const { log } = await click(w, 'gyes');
+    assert.deepEqual(w.rec.roleCalls, []);
+    assert.match(last(log).content, /Bot chưa cấp được role khách/);
+    assert.deepEqual(ev('gate.role_failed').map((e) => e.action), ['guest']);
+    const w2 = world();
+    w2.roles.get('r-guest').permissions = new PermissionsBitField(PermissionFlagsBits.Administrator);
+    await click(w2, 'gyes', { user: sid(6201) });
+    assert.deepEqual(w2.rec.roleCalls, []);
+  });
+  it('Discord refusing the role call is reported, nothing else happens', async () => {
+    const w = world({ roleFails: { add: ['r-guest'] } });
+    const { log } = await click(w, 'gyes');
+    assert.match(last(log).content, /Discord từ chối khi cấp role khách/);
+    assert.equal(w.rec.sent.filter((s) => s[0] === 'c-admin').length, 0);
+  });
+  it('the Người lạ role is dropped when the person becomes a guest', async () => {
+    config.strangerRoleId = 'r-stranger';
+    const w = world();
+    w.roles.set('r-stranger', { id: 'r-stranger', name: 'Người lạ', position: 1, managed: false });
+    await click(w, 'gyes', { roleIds: ['r-stranger'] });
+    assert.deepEqual(w.rec.roleCalls.map((c) => [c[0], c[2]]), [['add', ['r-guest']], ['remove', ['r-stranger']]]);
+  });
+  it('a guest can still apply as a member (no refusal for the guest role); the approval removes the guest role and keeps the rest of the flow', async () => {
+    const w = world({ members: [[ADMIN, 'Quản Lý', []]] });
+    w.mk(USER, 'Beta Boss', ['r-guest']);
+    const { request, card } = await sendRequest({ w });
+    assert.equal(request.status, 'pending');
+    const { i, log } = interactionOf(w, { user: ADMIN, admin: true, message: cardMessageOf(card) });
+    await gate.handle(i, ['gate', 'ok', String(request._id)]);
+    assert.equal(reqs[0].status, 'approved');
+    assert.deepEqual(w.rec.roleCalls.map((c) => [c[0], c[1], c[2]]), [['add', USER, ['r-member', 'r-ty']], ['remove', USER, ['r-guest']]]);
+    assert.deepEqual(saved.mappings, [[{ discordId: USER, gameName: 'Beta Boss', displayName: 'Beta Boss' }]]);
+    assert.ok(!assertV2Message(last(log)).text.includes('role khách'), 'no note when the guest role came off');
+  });
+  it('a guest role that cannot be removed on approval only adds a note: the member is still approved', async () => {
+    const w = world({ members: [[ADMIN, 'Quản Lý', []]], roleFails: { remove: ['r-guest'] } });
+    w.mk(USER, 'Beta Boss', ['r-guest']);
+    const { request, card } = await sendRequest({ w });
+    const { i, log } = interactionOf(w, { user: ADMIN, admin: true, message: cardMessageOf(card) });
+    await gate.handle(i, ['gate', 'ok', String(request._id)]);
+    assert.equal(reqs[0].status, 'approved');
+    assert.match(assertV2Message(last(log)).text, /Chưa gỡ được role khách/);
+  });
+  it('a double click on ✅ Vào làm khách gives the role once and posts ONE info card', async () => {
+    const w = world();
+    const run = () => gate.handle(interactionOf(w, { user: NEW_USER }).i, ['gate', 'gyes']);
+    await Promise.all([run(), run()]);
+    assert.equal(w.rec.roleCalls.filter((c) => c[0] === 'add').length, 1);
+    assert.equal(w.rec.sent.filter((s) => s[0] === 'c-admin').length, 1);
+    // the lock is released afterwards (a later refusal is the normal "already a guest")
+    const again = interactionOf(w, { user: NEW_USER });
+    await gate.handle(again.i, ['gate', 'gyes']);
+    assert.match(last(again.log).content, /đã là khách/);
+  });
+  describe('a guest is not a stranger', () => {
+    beforeEach(() => {
+      config.strangerRoleId = 'r-stranger';
+    });
+    const withStranger = (opts) => {
+      const w = world(opts);
+      w.roles.set('r-stranger', { id: 'r-stranger', name: 'Người lạ', position: 1, managed: false });
+      return w;
+    };
+
+    it('rejecting an applicant who holds the guest role does not give the stranger role back; without it the stranger role comes back', async () => {
+      const w = withStranger({ members: [[ADMIN, 'Quản Lý', []]] });
+      w.mk(USER, 'Beta Boss', ['r-guest']);
+      const { request, card } = await sendRequest({ w });
+      const no = interactionOf(w, { user: ADMIN, admin: true, fields: { reason: 'x' }, message: cardMessageOf(card) });
+      await gate.handle(no.i, ['gate', 'noModal', String(request._id)]);
+      assert.equal(reqs[0].status, 'rejected');
+      assert.deepEqual(w.rec.roleCalls, []);
+      const w2 = withStranger({ members: [[ADMIN, 'Quản Lý', []]] });
+      reqs.length = 0;
+      const second = await sendRequest({ w: w2 });
+      const no2 = interactionOf(w2, { user: ADMIN, admin: true, fields: { reason: 'x' }, message: cardMessageOf(second.card) });
+      await gate.handle(no2.i, ['gate', 'noModal', String(second.request._id)]);
+      assert.deepEqual(w2.rec.roleCalls.map((c) => [c[0], c[2]]), [['add', ['r-stranger']]]);
+    });
+    const approvedThenRevoke = async (w) => {
+      const { request, card } = await sendRequest({ w });
+      await gate.handle(interactionOf(w, { user: ADMIN, admin: true, message: cardMessageOf(card) }).i, ['gate', 'ok', String(request._id)]);
+      w.rec.roleCalls.length = 0;
+      const rv = interactionOf(w, { user: ADMIN, admin: true, fields: { reason: 'sai người' }, message: cardMessageOf(card) });
+      await gate.handle(rv.i, ['gate', 'rvModal', String(request._id)]);
+      return { request, log: rv.log };
+    };
+
+    it('revoking a member never hands out the guest role: member + class roles come off and the stranger role goes back, guest role set or not', async () => {
+      const w = withStranger({ members: [[ADMIN, 'Quản Lý', []]] });
+      await approvedThenRevoke(w);
+      assert.deepEqual(w.rec.roleCalls.map((c) => [c[0], c[2]]), [['remove', ['r-member', 'r-ty']], ['add', ['r-stranger']]]);
+      assert.equal(reqs[0].status, 'revoked');
+      reqs.length = 0;
+      config.guestRoleId = null;
+      const w2 = withStranger({ members: [[ADMIN, 'Quản Lý', []]] });
+      await approvedThenRevoke(w2);
+      assert.deepEqual(w2.rec.roleCalls.map((c) => [c[0], c[2]]), [['remove', ['r-member', 'r-ty']], ['add', ['r-stranger']]]);
+    });
+    it('the guest role must differ from the stranger role: roleProblem, health, and both /setup saves', async () => {
+      const { roleProblem, PROBLEM_TEXT } = require('../src/bot/gateRoles');
+      const w = withStranger();
+      assert.equal(roleProblem(w.guild, 'r-stranger', { ...config, guestRoleId: 'r-stranger' }, 'guest'), 'guest_same_as_stranger');
+      assert.equal(roleProblem(w.guild, 'r-guest', { ...config, guestRoleId: 'r-guest' }, 'stranger'), 'guest_same_as_stranger');
+      assert.match(PROBLEM_TEXT.guest_same_as_stranger, /Khách và role Người lạ phải khác nhau/);
+      assert.ok(gateHealth({ ...config, guestRoleId: 'r-stranger' }, w.guild).some((h) => !h.ok && /Khách.*phải khác nhau/.test(h.text)));
+      const writes = [];
+      guildConfigService.updateConfig = async (_id, patch) => (writes.push(patch), (config = { ...config, ...patch }));
+      guildConfigService.getOrCreateConfig = async () => config;
+      delete require.cache[require.resolve('../src/bot/interactions/setup')];
+      const fresh = require('../src/bot/interactions/setup');
+      const select = async (id, value) => {
+        const { i, log } = interactionOf(w, { user: ADMIN, admin: true, values: [value] });
+        await fresh.handle(i, ['setup', id]);
+        return last(log).content;
+      };
+      assert.match(await select('gateguestrole', 'r-stranger'), /Role khách .* chưa lưu: .*phải khác nhau/);
+      config.guestRoleId = 'r-guest';
+      assert.match(await select('gatestranger', 'r-guest'), /Role người lạ .* chưa lưu: .*phải khác nhau/);
+      assert.deepEqual(writes, []);
+      await select('gatestranger', 'r-stranger');
+      assert.deepEqual(writes, [{ strangerRoleId: 'r-stranger' }]);
+    });
+  });
+  it('the retired guest ids still answer "gone" even with a guest role set', async () => {
+    const w = world();
+    const a = await click(w, 'guest');
+    assert.match(last(a.log).content, /Lối vào Khách đang tắt/);
+    assert.deepEqual(w.rec.roleCalls, []);
+  });
+  it('the new guest ids are routed through the router and gated by the gate feature', async () => {
+    const { featureOf } = require('../src/bot/featureGate');
+    for (const id of ['gate:gst', 'gate:gyes', 'gate:gback']) assert.equal(featureOf(id), 'gate', id);
+  });
+});
+
+describe('/setup 🤝 role khách select', () => {
+  let writes;
+  let fresh;
+  beforeEach(() => {
+    writes = [];
+    guildConfigService.updateConfig = async (_id, patch) => {
+      writes.push(patch);
+      config = { ...config, ...patch };
+      return config;
+    };
+    guildConfigService.getOrCreateConfig = async () => config;
+    delete require.cache[require.resolve('../src/bot/interactions/setup')];
+    fresh = require('../src/bot/interactions/setup');
+  });
+  const pick = async (w, values, opts = {}) => {
+    const { i, log } = interactionOf(w, { user: ADMIN, admin: true, values, ...opts });
+    await fresh.handle(i, ['setup', 'gateguestrole']);
+    return last(log);
+  };
+
+  it('saves a safe role, shows it, and an empty selection clears it (the button goes away)', async () => {
+    const w = world();
+    const view = await pick(w, ['r-guest']);
+    assert.deepEqual(writes.pop(), { guestRoleId: 'r-guest' });
+    assert.match(view.content, /Đã lưu role khách/);
+    assert.match(view.content, /🤝 Nút Khách: \*\*BẬT\*\*/);
+    await pick(w, []);
+    assert.deepEqual(writes.pop(), { guestRoleId: null });
+    assert.equal(config.guestRoleId, null);
+  });
+  it('refuses (and saves nothing) @everyone, a managed role, the member role, a manager role, a privileged role and one above the bot', async () => {
+    config.adminRoleIds = ['r-ty'];
+    const w = world();
+    w.roles.set('r-priv', { id: 'r-priv', name: 'Mod', position: 1, managed: false, permissions: new PermissionsBitField(PermissionFlagsBits.KickMembers) });
+    const cases = [[GUILD, /@everyone/], ['r-bot', /role của bot/], ['r-member', /trùng role Thành viên/], ['r-ty', /role quản lý/], ['r-priv', /quyền quản trị/]];
+    for (const [id, re] of cases) {
+      const view = await pick(w, [id]);
+      assert.match(view.content, new RegExp(`Role khách <@&${id}> chưa lưu`));
+      assert.match(view.content, re, id);
+    }
+    const high = await pick(world({ botPosition: 1 }), ['r-guest']);
+    assert.match(high.content, /chưa lưu.*DƯỚI/s);
+    assert.deepEqual(writes, []);
+    assert.equal(config.guestRoleId, null);
+  });
+  it('only managers can change it', async () => {
+    const w = world();
+    const { i, log } = interactionOf(w, { values: ['r-guest'] });
+    await fresh.handle(i, ['setup', 'gateguestrole']);
+    assert.deepEqual(writes, []);
+    assert.equal(log.at(-1)[1].content, NO_PERMISSION);
+  });
+});
+
 describe('routing', () => {
   it('the gate prefix is routed through the router', async () => {
     const w = world();
@@ -1135,20 +1437,20 @@ describe('the war "chưa đăng ký" numbers: the member role decides (no guest 
 // ---------- security review: role safety, flood control, approve races ----------
 
 describe('H1: the class role the bot hands out must be safe', () => {
-  const PERMS = ['Administrator', 'ManageGuild', 'ManageRoles', 'ManageChannels', 'BanMembers', 'KickMembers', 'ManageMessages', 'MentionEveryone', 'ManageWebhooks', 'ModerateMembers'];
+  const PERMS = ['Administrator', 'ManageGuild', 'ManageRoles', 'ManageChannels', 'BanMembers', 'KickMembers', 'ManageMessages', 'MentionEveryone', 'ManageWebhooks', 'ModerateMembers', 'MoveMembers', 'MuteMembers', 'DeafenMembers', 'ManageNicknames', 'ManageThreads', 'ManageEvents', 'ViewAuditLog'];
   const { roleProblem, unsafeRole, checkRoles, PRIVILEGED, PROBLEM_TEXT, KIND_LABEL } = require('../src/bot/gateRoles');
   const grant = (w, id, ...names) => {
     w.roles.get(id).permissions = new PermissionsBitField(names.map((n) => PermissionFlagsBits[n]));
   };
 
-  it('the privileged list is exactly the ten permissions of the review', () => {
+  it('the privileged list is exactly the seventeen permissions of the review', () => {
     assert.deepEqual(PRIVILEGED, PERMS.map((n) => PermissionFlagsBits[n]));
   });
   it('no Khách / Chờ duyệt kinds, texts or checks remain', () => {
-    assert.deepEqual(Object.keys(KIND_LABEL), ['member', 'class', 'stranger']);
+    assert.deepEqual(Object.keys(KIND_LABEL), ['member', 'class', 'stranger', 'guest']);
     assert.ok(!('same_role' in PROBLEM_TEXT) && !('is_member' in PROBLEM_TEXT));
   });
-  it('a plain class role is fine; the same role with ANY of the ten permissions is refused for class', () => {
+  it('a plain class role is fine; the same role with ANY of the seventeen permissions is refused for class', () => {
     const w = world();
     assert.equal(roleProblem(w.guild, 'r-ty', config, 'class'), null);
     for (const name of PERMS) {

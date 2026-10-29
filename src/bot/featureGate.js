@@ -14,7 +14,7 @@ const RULES = {
   war: { feature: 'tuyenKhien', actions: set('tk', 'tkpick', 'tkcarry', 'tkclear') },
   ev: { feature: 'events', actions: set('rp', 'ls', 'rules') }, // the event panel and the manager view stay
   mb: { feature: 'mailbox', actions: set('open', 'cat', 'anon', 'named', 'sendModal', 'view', 'codeModal') }, // seen / done / reply / replyModal are the manager's card
-  gate: { feature: 'gate', actions: set('member', 'guest', 'swguest', 'back', 'p', 'pick', 'free', 'freeModal', 'cls', 'send') }, // ok / no / noModal / tg are the approval card
+  gate: { feature: 'gate', actions: set('member', 'guest', 'swguest', 'back', 'p', 'pick', 'free', 'freeModal', 'cls', 'send', 'gst', 'gyes', 'gback') }, // ok / no / noModal / rv / rvModal / tg are the approval card
 };
 
 // -> the feature key a customId needs to be on, or null when it is not gated (core features, manager cards).
