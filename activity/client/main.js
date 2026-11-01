@@ -27,6 +27,7 @@ const state = {
   saveState: '',
   confirming: false,
   busy: false,
+  sheetOpen: false, // phone: the "Chưa xếp" bottom sheet
 };
 let saveTimer = null;
 let noticeTimer = null;
@@ -71,6 +72,18 @@ function flash(text) {
     state.notice = '';
     render();
   }, 4000);
+}
+
+// ---------- phone layout ----------
+const phone = window.matchMedia('(max-width: 700px)');
+const isPhone = () => phone.matches;
+
+// "Thiết Y" -> "TY", "Huyết Hà" -> "HH", one word -> its first two letters ("Toái" -> "TO")
+function classTag(name) {
+  const words = String(name || '').normalize('NFC').split(/\s+/).filter(Boolean);
+  if (!words.length) return '';
+  const tag = words.length > 1 ? words.map((w) => Array.from(w)[0]).join('') : Array.from(words[0]).slice(0, 2).join('');
+  return tag.toUpperCase().slice(0, 3);
 }
 
 // ---------- model ----------
@@ -186,6 +199,13 @@ function startDrag(d) {
   d.ghost.style.width = `${d.chip.offsetWidth}px`;
   document.body.append(d.ghost);
   d.chip.classList.add('dragging');
+  if (state.sheetOpen && isPhone()) {
+    // out of the way of the board; only the classes change, the chip stays in the DOM until the drop
+    state.sheetOpen = false;
+    app.classList.remove('sheet-open');
+    const pool = document.querySelector('.pool');
+    if (pool) pool.classList.remove('open');
+  }
   moveGhost(d, d.x, d.y);
 }
 
@@ -250,6 +270,7 @@ document.addEventListener('touchmove', (e) => drag && drag.active && e.cancelabl
 function tapPerson(id) {
   if (!canEdit()) return;
   state.selected = state.selected === id ? null : id;
+  if (state.selected && isPhone()) state.sheetOpen = false; // picked: get the sheet out of the way to tap a slot
   render();
 }
 
@@ -278,7 +299,7 @@ function chip(m, where) {
     },
     h('span', { class: 'dot', style: `background:${m.classColor}` }),
     h('span', { class: 'nm' }, m.name),
-    where === 'pool' ? h('span', { class: 'cls' }, [m.className, m.rolePref].filter(Boolean).join(' · ')) : null
+    where === 'pool' ? h('span', { class: 'cls' }, [m.className, m.rolePref].filter(Boolean).join(' · ')) : h('span', { class: 'tag' }, classTag(m.className))
   );
   return el;
 }
@@ -297,7 +318,7 @@ function poolView() {
   const search = h('input', { type: 'search', placeholder: 'Tìm tên…', value: state.search, class: 'search', oninput: (e) => { state.search = e.target.value; fill(); } });
   const select = h('select', { class: 'filter', onchange: (e) => { state.classFilter = e.target.value; fill(); } }, h('option', { value: '' }, 'Mọi phái'), classes.map((c) => h('option', { value: c, selected: c === state.classFilter }, c)));
   fill();
-  return h('section', { class: 'pool', 'data-zone': 'pool', onclick: (e) => e.target.closest('.chip') || tapPool() }, h('h2', null, `Chưa xếp (${rest.length})`), h('div', { class: 'tools' }, search, select), list);
+  return h('section', { class: `pool${state.sheetOpen ? ' open' : ''}`, 'data-zone': 'pool', onclick: (e) => e.target.closest('.chip') || tapPool() }, h('h2', null, `Chưa xếp (${rest.length})`), h('div', { class: 'tools' }, search, select), list);
 }
 
 function partyView(g, p, byId) {
@@ -329,6 +350,17 @@ function meView() {
   const at = locate(state.layout, state.data.me.id);
   if (!state.data.members.some((m) => m.id === state.data.me.id)) return h('div', { class: 'me-bar' }, 'Bạn chưa báo danh tham gia bang chiến này.');
   return h('div', { class: 'me-bar' }, at ? `Bạn ở Nhóm ${at.group + 1} – PT ${at.party + 1}` : 'Bạn chưa được xếp vào PT nào.');
+}
+
+function legendView() {
+  const seen = new Map();
+  for (const m of state.data.members) if (m.className && !seen.has(m.className)) seen.set(m.className, m.classColor);
+  if (!seen.size) return null;
+  return h('div', { class: 'legend' }, [...seen].map(([name, color]) => h('span', { class: 'lg' }, h('span', { class: 'dot', style: `background:${color}` }), `${name} (${classTag(name)})`)));
+}
+
+function sheetToggle(waiting) {
+  return h('button', { class: 'sheet-toggle', onclick: () => { state.sheetOpen = !state.sheetOpen; render(); } }, `Chưa xếp (${waiting}) ${state.sheetOpen ? '▼' : '▲'}`);
 }
 
 function publishView() {
@@ -400,7 +432,8 @@ function render() {
   const total = state.data.layout.groupCount * state.data.layout.partiesPerGroup * state.data.layout.partySize;
   const waiting = state.data.members.length - placed;
   const scroll = document.querySelector('.pool-list') ? document.querySelector('.pool-list').scrollTop : 0;
-  app.replaceChildren(
+  // replaceChildren turns a null argument into the text "null": drop the absent parts first
+  const parts = [
     h(
       'header',
       null,
@@ -408,11 +441,14 @@ function render() {
       h('div', { class: 'counters' }, h('span', null, `Đã xếp ${placed}/${total}`), h('span', null, `Chưa xếp ${waiting}`), h('span', { class: 'save' }, canEdit() ? state.saveState : 'Chỉ xem')),
       state.notice ? h('div', { class: 'notice' }, state.notice) : null
     ),
+    legendView(),
     !canEdit() ? meView() : null,
     h('main', null, boardView(), poolView()),
-    h('footer', null, publishView()),
-    state.confirming ? confirmView() : null
-  );
+    h('footer', null, canEdit() ? sheetToggle(waiting) : null, publishView()),
+    state.confirming ? confirmView() : null,
+  ];
+  app.className = `${canEdit() ? 'editing' : 'viewing'}${state.sheetOpen ? ' sheet-open' : ''}`;
+  app.replaceChildren(...parts.filter(Boolean));
   const list = document.querySelector('.pool-list');
   if (list) list.scrollTop = scroll;
 }
