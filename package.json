@@ -14,13 +14,17 @@
     "logs:report": "node scripts/log-report.js",
     "mail:keygen": "node scripts/mailbox-keygen.js",
     "mail:who": "node scripts/mailbox-who.js",
-    "package": "node packaging/build.js"
+    "package": "node packaging/build.js",
+    "activity:build": "esbuild activity/client/main.js --bundle --minify --format=iife --target=es2020 --outfile=activity/public/app.js",
+    "activity": "node activity/server.js"
   },
   "license": "MIT",
   "dependencies": {
+    "@discord/embedded-app-sdk": "^2.5.0",
     "@napi-rs/canvas": "^1.0.10",
     "discord.js": "^14.27.0",
     "dotenv": "^18.0.5",
+    "esbuild": "^0.28.2",
     "exceljs": "^4.4.0",
     "express": "^5.2.1",
     "jszip": "3.10.2",

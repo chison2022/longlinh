@@ -10,9 +10,11 @@ function pgOptions() {
   if (!url) throw new Error('PG_URL is missing in .env');
   const u = new URL(url);
   u.searchParams.delete('sslmode'); // the ssl object below replaces it (a sslmode in the URL would override the CA)
+  // PG_CA_PEM = the certificate text itself (a host without files, e.g. the Activity on Render); else PG_CA = a path to the file
   const caPath = process.env.PG_CA;
-  if (!caPath) throw new Error('PG_CA is missing in .env');
-  const ca = fs.readFileSync(path.resolve(appRoot(), caPath), 'utf8');
+  const pem = process.env.PG_CA_PEM && process.env.PG_CA_PEM.replace(/\\n/g, '\n');
+  if (!pem && !caPath) throw new Error('PG_CA is missing in .env');
+  const ca = pem || fs.readFileSync(path.resolve(appRoot(), caPath), 'utf8');
   return { connectionString: u.toString(), ssl: { ca, rejectUnauthorized: true } };
 }
 

@@ -15,6 +15,7 @@ const handlers = {
   mb: require('./mailbox').handle,
   ev: require('./events').handle,
   gate: require('./gate').handle,
+  lu: require('./lineup').handle,
 };
 
 async function replyError(interaction) {

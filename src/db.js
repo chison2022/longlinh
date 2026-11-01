@@ -136,6 +136,22 @@ const MIGRATIONS = [
   'alter table gate_requests add column if not exists game_uid text',
   "create unique index if not exists gate_requests_pending_uid on gate_requests (guild_id, game_uid) where status = 'pending' and game_uid is not null",
   'create unique index if not exists game_characters_uid on game_characters (guild_id, game_uid) where game_uid is not null',
+  // war lineups for the Activity (2026-11-01); same DDL as db/schema.sql
+  `create table if not exists war_lineups (
+  war_id               char(24) primary key references war_events (id) on delete cascade,
+  guild_id             text not null,
+  layout               jsonb not null,
+  version              int not null default 0,
+  updated_by           text,
+  updated_at           timestamptz not null default now(),
+  publish_requested_at timestamptz,
+  publish_requested_by text,
+  published_version    int,
+  published_at         timestamptz,
+  publish_error        text
+)`,
+  'alter table war_lineups add column if not exists published_layout jsonb', // the posted layout (2026-11-01)
+  'alter table war_lineups add column if not exists claimed_at timestamptz', // cross-process publish claim
 ];
 
 async function ensureSchema() {

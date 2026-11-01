@@ -13,6 +13,7 @@ const { ensureMembers } = require('../bot/memberCache');
 const { scheduleRefresh, scheduleEventRefresh, schedulePanelRefresh, postWarMessage, hasPendingSave, retryPendingSaves } = require('../bot/refresher');
 const { scheduleSync } = require('../bot/sheetSync');
 const { scheduleDocSync } = require('../bot/eventDocSync');
+const lineupPublisher = require('./lineupPublisher');
 const departNotice = require('../bot/departNotice');
 const offNotice = require('../bot/offNotice');
 const { buildMinNotice } = require('../bot/ui/eventCard');
@@ -327,10 +328,12 @@ async function tick(client, now = new Date()) {
 function start(client) {
   if (task) return;
   tick(client);
+  lineupPublisher.start(client); // posts the lineups asked for in the Activity (own 20 s interval)
   task = cron.schedule('* * * * *', () => tick(client), { timezone: 'Asia/Ho_Chi_Minh', noOverlap: true });
 }
 
 function stop() {
+  lineupPublisher.stop();
   if (task) task.stop();
   task = null;
   postBackoff.clear();
