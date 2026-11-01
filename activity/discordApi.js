@@ -2,6 +2,9 @@
 const crypto = require('node:crypto');
 
 const API = 'https://discord.com/api/v10';
+const CDN = 'https://cdn.discordapp.com';
+const EMOJI_CACHE = 200;
+const MAX_EMOJI_BYTES = 262144;
 const USER_TTL_MS = 5 * 60 * 1000;
 const GUILD_TTL_MS = 5 * 60 * 1000;
 const FAIL_TTL_MS = 30 * 1000; // a refused token / non-member / failed lookup is remembered briefly: random tokens cannot hammer Discord
@@ -22,6 +25,8 @@ function createDiscordApi({ fetchFn = globalThis.fetch, clientId, clientSecret, 
   const users = new Map(); // token hash -> user | null
   const members = new Map(); // `${token hash}:${guildId}` -> member | null
   const guilds = new Map(); // guildId -> { id, ownerId, roles } | null
+  const emojiLists = new Map(); // guildId -> [{ id, name, animated, managed, roleIds }] | null
+  const images = new Map(); // emoji id -> Buffer (LRU: a hit is re-inserted)
 
   async function json(url, headers) {
     const res = await fetchFn(url, { headers, signal: AbortSignal.timeout(8000) });
@@ -81,7 +86,45 @@ function createDiscordApi({ fetchFn = globalThis.fetch, clientId, clientSecret, 
     return info;
   }
 
-  return { exchangeCode, userOf, memberOf, guildInfo };
+  // The guild's custom emojis through the bot token, in the shape classStyle.matchClassStyles reads. null without a token / on failure.
+  async function guildEmojis(guildId) {
+    const hit = recall(emojiLists, guildId, GUILD_TTL_MS);
+    if (hit !== undefined) return hit;
+    let list = null;
+    if (botToken) {
+      try {
+        const rows = await json(`${API}/guilds/${guildId}/emojis`, { Authorization: `Bot ${botToken}` });
+        if (Array.isArray(rows)) list = rows.filter((e) => e.available !== false && e.name).map((e) => ({ id: String(e.id), name: e.name, animated: Boolean(e.animated), managed: Boolean(e.managed), roleIds: (e.roles || []).map(String) }));
+      } catch {
+        list = null;
+      }
+    }
+    remember(emojiLists, guildId, list);
+    return list;
+  }
+
+  // The PNG of a custom emoji (static, 48 px) from the CDN, cached. -> Buffer | null
+  async function emojiImage(id) {
+    if (images.has(id)) {
+      const buf = images.get(id);
+      images.delete(id);
+      images.set(id, buf);
+      return buf;
+    }
+    try {
+      const res = await fetchFn(`${CDN}/emojis/${id}.png?size=48`, { signal: AbortSignal.timeout(8000) });
+      if (!res.ok) return null;
+      const buf = Buffer.from(await res.arrayBuffer());
+      if (!buf.length || buf.length > MAX_EMOJI_BYTES) return null;
+      if (images.size >= EMOJI_CACHE) images.delete(images.keys().next().value);
+      images.set(id, buf);
+      return buf;
+    } catch {
+      return null;
+    }
+  }
+
+  return { exchangeCode, userOf, memberOf, guildInfo, guildEmojis, emojiImage };
 }
 
 module.exports = { createDiscordApi, API };

@@ -80,10 +80,21 @@ const isPhone = () => phone.matches;
 
 // "Thiết Y" -> "TY", "Huyết Hà" -> "HH", one word -> its first two letters ("Toái" -> "TO")
 function classTag(name) {
+  const known = state.data && state.data.classes && state.data.classes.find((c) => c.name === name);
+  if (known && known.tag) return known.tag;
   const words = String(name || '').normalize('NFC').split(/\s+/).filter(Boolean);
   if (!words.length) return '';
   const tag = words.length > 1 ? words.map((w) => Array.from(w)[0]).join('') : Array.from(words[0]).slice(0, 2).join('');
   return tag.toUpperCase().slice(0, 3);
+}
+
+// The class mark: the guild's emoji image when there is one (a broken image turns back into the colour dot), else the colour dot.
+function classMark(emojiId, color) {
+  const dot = () => h('span', { class: 'dot', style: `background:${color}` });
+  if (!emojiId) return dot();
+  const img = h('img', { class: 'cls-icon', src: `/api/emoji/${emojiId}`, alt: '', draggable: 'false' });
+  img.addEventListener('error', () => img.replaceWith(dot()));
+  return img;
 }
 
 // ---------- model ----------
@@ -292,12 +303,13 @@ function chip(m, where) {
   const el = h(
     'div',
     {
+      style: m.classEmoji ? `border-left:3px solid ${m.classColor}` : null,
       class: `chip${state.selected === m.id ? ' selected' : ''}${me ? ' me' : ''}${canEdit() ? ' movable' : ''}`,
       'data-id': m.id,
       onpointerdown: (e) => onPointerDown(e, m.id),
       title: `${m.name}${m.className ? ` — ${m.className}` : ''}`,
     },
-    h('span', { class: 'dot', style: `background:${m.classColor}` }),
+    classMark(m.classEmoji, m.classColor),
     h('span', { class: 'nm' }, m.name),
     where === 'pool' ? h('span', { class: 'cls' }, [m.className, m.rolePref].filter(Boolean).join(' · ')) : h('span', { class: 'tag' }, classTag(m.className))
   );
@@ -353,10 +365,10 @@ function meView() {
 }
 
 function legendView() {
-  const seen = new Map();
-  for (const m of state.data.members) if (m.className && !seen.has(m.className)) seen.set(m.className, m.classColor);
-  if (!seen.size) return null;
-  return h('div', { class: 'legend' }, [...seen].map(([name, color]) => h('span', { class: 'lg' }, h('span', { class: 'dot', style: `background:${color}` }), `${name} (${classTag(name)})`)));
+  const used = new Set(state.data.members.map((m) => m.className).filter(Boolean));
+  const list = (state.data.classes || []).filter((c) => used.has(c.name));
+  if (!list.length) return null;
+  return h('div', { class: 'legend' }, list.map((c) => h('span', { class: 'lg' }, classMark(c.emojiId, c.color), `${c.name} (${c.tag || classTag(c.name)})`)));
 }
 
 function sheetToggle(waiting) {

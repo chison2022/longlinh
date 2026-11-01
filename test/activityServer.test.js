@@ -22,6 +22,9 @@ const TOKENS = {
   'tok-outsider-eeee': { id: '555000000000000009', roles: null },
 };
 const discordCalls = [];
+const cdnCalls = [];
+const EMOJI_TY = '900000000000000001'; // matches the class Thiết Y by slug
+const EMOJI_TV = '900000000000000002'; // matches Tố Vấn by initials
 
 function fakeDiscord(url, options = {}) {
   discordCalls.push(String(url));
@@ -32,7 +35,13 @@ function fakeDiscord(url, options = {}) {
     const form = String(options.body);
     return form.includes('code=good') ? json({ access_token: 'tok-admin-aaaaaaaa' }) : json({}, false);
   }
+  if (u.startsWith('https://cdn.discordapp.com/emojis/')) {
+    cdnCalls.push(u);
+    const bytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 1, 2, 3]);
+    return Promise.resolve({ ok: !u.includes('999999999999999999'), status: 200, arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.length) });
+  }
   if (auth.startsWith('Bot ')) {
+    if (u.endsWith(`/guilds/${G}/emojis`)) return json([{ id: EMOJI_TY, name: 'thiety', animated: false, roles: [] }, { id: EMOJI_TV, name: 'TV', animated: false, roles: [] }, { id: '900000000000000003', name: 'locked', roles: ['1'] }]);
     if (u.endsWith(`/guilds/${G}`)) return json({ id: G, owner_id: TOKENS['tok-owner-ccccccc'].id });
     if (u.endsWith(`/guilds/${G}/roles`)) return json([{ id: G, permissions: '0' }, { id: '700000000000000009', permissions: String(0x20) }, { id: ADMIN_ROLE, permissions: '0' }]);
     return json({}, false);
@@ -59,6 +68,7 @@ beforeEach(async () => {
   await resetDb();
   clearConfigCache();
   discordCalls.length = 0;
+  cdnCalls.length = 0;
   w = await seedWar({ classes: ['Tố Vấn', 'Thiết Y', 'Huyết Hà'] });
   await db.q(`update guilds set settings = $2 where id = $1`, [G, JSON.stringify({ adminRoleIds: [ADMIN_ROLE], classes: ['Thiết Y', 'Tố Vấn', 'Huyết Hà'], groupCount: 2 })]);
   // member ids of the seed are sid(1..3) = 100000000000000001..3, the "plain" token is member 1
@@ -143,6 +153,58 @@ describe('hardening', () => {
     await db.q('drop table war_lineups');
     assert.deepEqual(await schemaProblems(), ['war_lineups']);
     await db.q('create table war_lineups (war_id char(24) primary key references war_events (id) on delete cascade, guild_id text not null, layout jsonb not null, version int not null default 0, updated_by text, updated_at timestamptz not null default now(), publish_requested_at timestamptz, publish_requested_by text, published_version int, published_at timestamptz, publish_error text, published_layout jsonb, claimed_at timestamptz)');
+  });
+});
+
+describe('class emojis', () => {
+  it('members and the legend carry the guild emoji the bot would pick; a class without one gets null', async () => {
+    const r = await call('GET', `/api/lineup/${w.warId}`, 'tok-admin-aaaaaaaa');
+    const byName = Object.fromEntries(r.body.members.map((m) => [m.className, m.classEmoji]));
+    assert.deepEqual(byName, { 'Tố Vấn': EMOJI_TV, 'Thiết Y': EMOJI_TY, 'Huyết Hà': null });
+    const legend = Object.fromEntries(r.body.classes.map((c) => [c.name, c]));
+    assert.equal(legend['Thiết Y'].emojiId, EMOJI_TY);
+    assert.equal(legend['Thiết Y'].tag, 'TY');
+    assert.equal(legend['Huyết Hà'].emojiId, null);
+    assert.match(legend['Tố Vấn'].color, /^#[0-9a-f]{6}$/);
+  });
+  it('the settings override applies: :none: gives no emoji', async () => {
+    await db.q('update guilds set settings = settings || $2::jsonb where id = $1', [G, JSON.stringify({ classEmojis: [{ className: 'Tố Vấn', emoji: 'none' }] })]);
+    clearConfigCache();
+    const r = await call('GET', `/api/lineup/${w.warId}`, 'tok-admin-aaaaaaaa');
+    assert.equal(r.body.classes.find((c) => c.name === 'Tố Vấn').emojiId, null);
+  });
+  it('without a bot token every class falls back to its colour (emojiId null)', async () => {
+    const app = createApp({ fetchFn: fakeDiscord, env: { CLIENT_ID: '999', CLIENT_SECRET: 's' }, staticDir: __dirname });
+    const s2 = http.createServer(app);
+    await new Promise((r) => s2.listen(0, '127.0.0.1', r));
+    try {
+      const res = await fetch(`http://127.0.0.1:${s2.address().port}/api/lineup/${w.warId}`, { headers: { Authorization: 'Bearer tok-admin-aaaaaaaa' } });
+      const body = await res.json();
+      assert.equal(res.status, 200);
+      assert.ok(body.members.every((m) => m.classEmoji === null));
+    } finally {
+      await new Promise((r) => s2.close(r));
+    }
+  });
+  it('/api/emoji serves only class emojis already resolved, without a token, as cached PNG', async () => {
+    const app = createApp({ fetchFn: fakeDiscord, env: { CLIENT_ID: '999', CLIENT_SECRET: 's', DISCORD_TOKEN: 'bot-token' }, staticDir: __dirname }); // fresh: nothing resolved yet
+    const s3 = http.createServer(app);
+    await new Promise((r) => s3.listen(0, '127.0.0.1', r));
+    const root = `http://127.0.0.1:${s3.address().port}`;
+    const img = (id) => fetch(`${root}/api/emoji/${id}`);
+    assert.equal((await img('abc')).status, 400);
+    assert.equal((await img(EMOJI_TY)).status, 404, 'not resolved yet: no open proxy');
+    assert.equal((await img('900000000000000003')).status, 404, 'a role-locked emoji of the guild is never a class emoji');
+    await fetch(`${root}/api/lineup/${w.warId}`, { headers: { Authorization: 'Bearer tok-admin-aaaaaaaa' } });
+    const ok = await img(EMOJI_TY);
+    assert.equal(ok.status, 200);
+    assert.equal(ok.headers.get('content-type'), 'image/png');
+    assert.equal(ok.headers.get('cache-control'), 'public, max-age=86400');
+    assert.deepEqual(Buffer.from(await ok.arrayBuffer()).subarray(0, 4), Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+    await img(EMOJI_TY);
+    assert.equal(cdnCalls.filter((u) => u.includes(EMOJI_TY)).length, 1, 'the second request comes from memory');
+    assert.match(cdnCalls[0], /\.png\?size=48$/);
+    await new Promise((r) => s3.close(r));
   });
 });
 

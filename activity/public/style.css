@@ -28,14 +28,14 @@ header .title { display: flex; gap: 8px; align-items: center; flex: 1 1 200px; }
 main { flex: 1; display: grid; grid-template-columns: 1fr 300px; gap: 12px; padding: 12px; align-items: start; }
 .board { display: grid; gap: 14px; min-width: 0; }
 .group { background: var(--panel); border-radius: 8px; padding: 10px; }
-.parties { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 8px; }
+.parties { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 8px; }
 .party { background: var(--panel2); border-radius: 6px; padding: 6px; border: 1px solid transparent; }
 .party.warn { border-color: #5c4a14; }
 .party-head { display: flex; gap: 8px; align-items: baseline; margin-bottom: 4px; }
 .party-head .count { color: var(--muted); font-size: 12px; }
 .party-head .warns { color: var(--warn); font-size: 12px; margin-left: auto; }
-.slots { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
-.slot { min-height: 34px; border: 1px dashed var(--line); border-radius: 5px; display: flex; align-items: center; justify-content: center; }
+.slots { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 4px; }
+.slot { min-width: 0; min-height: 34px; border: 1px dashed var(--line); border-radius: 5px; display: flex; align-items: center; justify-content: center; }
 .slot.filled { border-style: solid; border-color: transparent; background: #383a40; }
 .slot .ph { color: #5d6069; font-size: 12px; }
 .slot.over, .pool.over { outline: 2px solid var(--accent); background: #3a3f7a; }
@@ -51,6 +51,8 @@ main { flex: 1; display: grid; grid-template-columns: 1fr 300px; gap: 12px; padd
 .chip.movable { cursor: grab; }
 .chip .dot { width: 12px; height: 12px; border-radius: 3px; flex: none; }
 .chip .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+.cls-icon { width: 18px; height: 18px; flex: none; object-fit: contain; -webkit-user-drag: none; pointer-events: none; }
+.legend .cls-icon { width: 16px; height: 16px; }
 .chip .tag { color: var(--muted); font-size: 11px; font-weight: 600; flex: none; }
 .chip .cls { color: var(--muted); font-size: 12px; white-space: nowrap; }
 .chip.selected { outline: 2px solid var(--warn); }

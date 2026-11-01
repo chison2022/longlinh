@@ -11,6 +11,7 @@ const rules = require('../src/services/lineupRules');
 const { getConfigOrDefault } = require('../src/services/guildConfigService');
 const { layoutOf } = require('../src/services/teamService');
 const { chipColor, plainClass } = require('../src/services/lineupStyle');
+const { matchClassStyles, styleOf, classCodes } = require('../src/bot/classStyle');
 const { createDiscordApi } = require('./discordApi');
 const { isManager } = require('./adminRule');
 
@@ -74,6 +75,19 @@ function createApp({ fetchFn = globalThis.fetch, env = process.env, staticDir = 
   });
 
   api.get('/config', (req, res) => res.json({ clientId: env.CLIENT_ID || null }));
+
+  // Class emoji images. An <img> cannot send the bearer token, so only ids resolved as the class emoji of a guild this server has served
+  // are answered (never an open proxy), and by IP rate limit.
+  const knownEmojis = new Set();
+  api.get('/emoji/:id', perIp(ipKey), async (req, res) => {
+    const id = String(req.params.id);
+    if (!SNOWFLAKE.test(id)) return res.status(400).json({ error: 'Mã emoji không hợp lệ.' });
+    if (!knownEmojis.has(id)) return res.status(404).json({ error: 'Không tìm thấy.' });
+    const png = await discord.emojiImage(id);
+    if (!png) return res.status(404).json({ error: 'Không tìm thấy.' });
+    res.set({ 'Content-Type': 'image/png', 'Cache-Control': 'public, max-age=86400' });
+    return res.send(png);
+  });
 
   api.post('/token', tokens(ipKey), async (req, res) => {
     const code = req.body && req.body.code;
@@ -149,11 +163,23 @@ function createApp({ fetchFn = globalThis.fetch, env = process.env, staticDir = 
     const joiners = await lineupService.listJoiners(war.id);
     const order = config.classes || [];
     const colorOf = (className) => chipColor(Math.max(order.findIndex((c) => rules.sameClass(c, className)), 0));
+    // the guild's class emojis, matched exactly as the bot does (settings override, slug, initials); colour dots when unavailable
+    const emojiList = (await discord.guildEmojis(war.guildId)) || [];
+    const styles = matchClassStyles(order, [], emojiList, config.classEmojis);
+    const emojiIdOf = (className) => {
+      const e = className ? styleOf(styles, className).emoji : null;
+      if (e) knownEmojis.add(e.id);
+      return e ? e.id : null;
+    };
+    const codes = classCodes(order);
+    const seenClasses = [...order.map((c) => plainClass(c)), ...joiners.map((j) => (j.className ? plainClass(j.className) : '')).filter(Boolean)];
+    const classes = [...new Set(seenClasses)].map((name) => ({ name, tag: codes.get(name) || '', color: colorOf(name), emojiId: emojiIdOf(name) }));
     const members = joiners.map((j) => ({
       id: j.id,
       name: j.name || j.id,
       className: j.className ? plainClass(j.className) : '',
       classColor: colorOf(j.className),
+      classEmoji: emojiIdOf(j.className),
       rolePref: ROLE_LABEL(j.rolePref),
       createdAt: j.createdAt,
     }));
@@ -166,6 +192,7 @@ function createApp({ fetchFn = globalThis.fetch, env = process.env, staticDir = 
       layout: shape,
       rules: { healerClass: defaults.healerClass, tankClass: defaults.tankClass },
       members,
+      classes,
       lineup,
       version: row ? row.version : 0,
       updatedBy: row ? row.updatedBy : null,
