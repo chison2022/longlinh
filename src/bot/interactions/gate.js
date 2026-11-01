@@ -645,6 +645,16 @@ async function onRevoke(interaction, id) {
   } else {
     notes.push('ℹ️ Người này đã rời server.');
   }
+  // the ID the approval gave goes too (a wrong name / ID is the usual reason), before the link it is found through is removed
+  if (request.gameUid) {
+    try {
+      const freed = await gameRoster.releaseRequestUid(interaction.guildId, { uid: request.gameUid, gameName: request.gameName, discordId: request.discordId });
+      if (freed) notes.push(`🆔 Đã gỡ ID game \`${request.gameUid}\` khỏi **${ui.safe(freed, 40)}**.`);
+    } catch (err) {
+      console.error('[gate] cannot release the game ID:', err.message);
+      notes.push('⚠️ Chưa gỡ được ID game: sửa tay trong 🎮 Thành viên game.');
+    }
+  }
   // the game name the approval linked is freed, or its real owner could never pick it
   try {
     if (await gameRoster.removeMappings(interaction.guildId, [request.discordId])) notes.push(`🔓 Đã gỡ liên kết tên game **${ui.safe(request.gameName, 40)}**.`);

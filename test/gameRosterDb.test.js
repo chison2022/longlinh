@@ -207,6 +207,23 @@ describe('removeRegistrations', () => {
     assert.deepEqual((await reg.listRegistrations(ev._id)).map((r) => r.discordId), [sid(2)]);
     assert.deepEqual(await reg.removeRegistrations('nope', [sid(2)]), []);
   });
+
+  it('a member who left the server goes out of open wars, absent answers too; a published war keeps them', async () => {
+    const w = require('../src/services/warService');
+    const reg = require('../src/services/registrationService');
+    const { dropFromActiveWars } = require('../src/bot/leaverRegs');
+    const open = await w.createEvent({ guildId: G, title: 'BC1', startAt: T3, deadlineAt: T3 });
+    const pub = await w.createEvent({ guildId: G, title: 'BC2', startAt: new Date(T3.getTime() + 864e5), deadlineAt: T3 });
+    await w.publishEvent(pub._id);
+    for (const ev of [open, pub]) {
+      await reg.upsertRegistration({ eventId: ev._id, guildId: G, discordId: sid(1), displayName: 'P1', status: 'absent', className: 'Tố Vấn' });
+      await reg.upsertRegistration({ eventId: ev._id, guildId: G, discordId: sid(2), displayName: 'P2', status: 'join', className: 'Tố Vấn' });
+    }
+    const out = await dropFromActiveWars(null, G, (regs) => regs.map((r) => r.discordId).filter((id) => id !== sid(2)), 'test');
+    assert.deepEqual(out, [{ eventId: String(open._id), removed: [sid(1)] }]);
+    assert.deepEqual((await reg.listRegistrations(open._id)).map((r) => r.discordId), [sid(2)]);
+    assert.equal((await reg.listRegistrations(pub._id)).length, 2);
+  });
 });
 
 describe('in-game character ID (game_uid)', () => {
@@ -232,6 +249,16 @@ describe('in-game character ID (game_uid)', () => {
     assert.equal(await uidOf('Hắc Phong'), null);
     assert.match((await gr.setGameUid(G, 'Không Có', '12345678')).error, /Không tìm thấy nhân vật \*\*Không Có\*\*/);
     assert.match((await gr.setGameUid(G, 'An', '12x45')).error, /chữ số/);
+  });
+  it('releaseRequestUid: a revoked approval clears its ID only from the request\'s character, never from another holder', async () => {
+    await save([m('An'), m('Bình')], T1);
+    await gr.setGameUid(G, 'An', '11111');
+    await gr.setGameUid(G, 'Bình', '22222');
+    assert.equal(await gr.releaseRequestUid(G, { uid: '22222', gameName: 'an' }), null, 'An does not hold 22222');
+    assert.equal(await uidOf('Bình'), '22222');
+    assert.equal(await gr.releaseRequestUid(G, { uid: '11111', gameName: ' AN ' }), 'An');
+    assert.equal(await uidOf('An'), null);
+    assert.equal(await gr.releaseRequestUid(G, { uid: '', gameName: 'Bình' }), null);
   });
   it('an ID is never shared: the holder is named, a departed holder says so and points at ✏️ Đổi tên; no raw DB error', async () => {
     await save([m('An'), m('Bình'), m('Chi')], T1);

@@ -113,11 +113,12 @@ function listRegistrations(eventId) {
   return db.q(`${REG_SQL} where r.war_id = $1 order by r.created_at, m.discord_id`, [String(eventId)]);
 }
 
-// Removes the "join" registrations of these people for one war (a manager's "Gỡ báo danh"); an absent answer stays. -> the Discord ids removed
-async function removeRegistrations(eventId, discordIds) {
+// Removes the "join" registrations of these people for one war (a manager's "Gỡ báo danh"); an absent answer stays unless
+// `withAbsent` (someone who left the Discord server is taken out of every list). -> the Discord ids removed
+async function removeRegistrations(eventId, discordIds, { withAbsent = false } = {}) {
   if (!db.isId(String(eventId)) || !(discordIds || []).length) return [];
   const rows = await db.q(
-    `delete from registrations r using discord_members m where r.member_id = m.id and r.war_id = $1 and m.discord_id = any($2) and r.status <> 'absent' returning m.discord_id`,
+    `delete from registrations r using discord_members m where r.member_id = m.id and r.war_id = $1 and m.discord_id = any($2)${withAbsent ? '' : ` and r.status <> 'absent'`} returning m.discord_id`,
     [String(eventId), [...discordIds]]
   );
   return rows.map((r) => r.discord_id);

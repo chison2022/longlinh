@@ -911,6 +911,20 @@ async function claimGameUid(guildId, name, uid, { characterId = null, by = null 
   }
 }
 
+// ↩️ A revoked gate approval takes back the ID it gave: cleared from the character that still holds exactly that ID when it is the
+// request's character (by id or name) or the one the applicant is linked to. Run before the link is removed. -> the character name | null
+async function releaseRequestUid(guildId, { uid, characterId = null, gameName = '', discordId = null }) {
+  if (!uid) return null;
+  const row = await db.one(
+    `update game_characters g set game_uid = null, game_uid_by = null where g.guild_id = $1 and g.game_uid = $2 and (g.id::text = $3 or g.name_key = $4
+       or exists (select 1 from character_links l join discord_members m on m.id = l.member_id where l.character_id = g.id and m.discord_id = $5))
+     returning g.name`,
+    [guildId, String(uid), characterId == null ? '' : String(characterId), gameName ? storedKey(gameName) : '', discordId || '']
+  );
+  if (row) bump(guildId);
+  return row ? row.name : null;
+}
+
 // Undo a claimGameUid() that set the ID (the approval it belonged to did not finish): the ID is cleared, and a typed row the claim
 // made is removed again (nobody is linked to it yet).
 async function releaseGameUid(guildId, characterId) {
@@ -969,4 +983,4 @@ async function renameCharacter(guildId, oldId, newId) {
   return out;
 }
 
-module.exports = { cleanGameUid, checkGameUid, uidHolder, setGameUid, claimGameUid, releaseGameUid, findCharacter, GAME_UID_MIN, GAME_UID_MAX, renameChoices, renameCharacter, departedOf, parseOffDays, offDaysOf, SHEET, MAX_ROWS, parseRosterXlsx, norm, fold, diff, summarize, matchDiscord, levenshtein, similarity, suggestPairs, rankPeople, gameNameMap, nameSources, linkCounts, rankGames, nameKey, isCutName, normalizeCut, cutStem, skeleton, cleanFreeName, FREE_NAME_MAX,  TAKEN_ADMIN_MSG, TAKEN_SELF_MSG, TAKEN_AUTO_MSG, takenMessage, getLink, selfLink, selfUnlink,  saveImport, addManualMember, latest, byId, latestMeta, latestRanks, epochOf, bump, rosterVersion, previous, loadMappings, setMappings, removeMappings, matchGuild };
+module.exports = { cleanGameUid, checkGameUid, uidHolder, setGameUid, claimGameUid, releaseGameUid, releaseRequestUid, findCharacter, GAME_UID_MIN, GAME_UID_MAX, renameChoices, renameCharacter, departedOf, parseOffDays, offDaysOf, SHEET, MAX_ROWS, parseRosterXlsx, norm, fold, diff, summarize, matchDiscord, levenshtein, similarity, suggestPairs, rankPeople, gameNameMap, nameSources, linkCounts, rankGames, nameKey, isCutName, normalizeCut, cutStem, skeleton, cleanFreeName, FREE_NAME_MAX,  TAKEN_ADMIN_MSG, TAKEN_SELF_MSG, TAKEN_AUTO_MSG, takenMessage, getLink, selfLink, selfUnlink,  saveImport, addManualMember, latest, byId, latestMeta, latestRanks, epochOf, bump, rosterVersion, previous, loadMappings, setMappings, removeMappings, matchGuild };

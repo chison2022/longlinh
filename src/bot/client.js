@@ -11,6 +11,7 @@ const { scheduleSync } = require('./sheetSync');
 const gateway = require('../services/sheets/gateway');
 const { getConfig } = require('../services/guildConfigService');
 const { onGateMemberAdd, onGateMemberRemove } = require('./gateEvents');
+const leaverRegs = require('./leaverRegs');
 const { logEvent } = require('../eventLog');
 
 // Fills the member cache of a guild so live names resolve (the GuildMembers intent keeps it current afterwards).
@@ -32,6 +33,13 @@ async function warmAndRedraw(c, options = {}) {
     await warmAllGuilds([...c.guilds.cache.values()], options.warm);
   } catch (err) {
     console.warn('[bot] member warm-up:', err.message);
+  }
+  for (const guild of c.guilds.cache.values()) {
+    try {
+      await leaverRegs.pruneLeavers(null, guild); // left while the bot was down; the redraw below shows the new counts
+    } catch (err) {
+      console.warn(`[bot] prune leavers of ${guild.id}:`, err.message);
+    }
   }
   try {
     await redrawAll(c, options.redraw);
@@ -126,6 +134,7 @@ async function startBot(token) {
   });
   client.on(Events.GuildMemberAdd, onGateMemberAdd); // gate: logs only, assigns nothing
   client.on(Events.GuildMemberRemove, onGateMemberRemove); // gate: a pending request of someone who left is cancelled
+  client.on(Events.GuildMemberRemove, leaverRegs.onMemberLeave); // out of the open / locked war lists
   client.on(Events.GuildCreate, warmMembers);
   client.on(Events.VoiceStateUpdate, voiceHang.onVoiceStateUpdate); // 🎧 Treo voice: back to the chosen channel when moved / kicked
   client.on(Events.ShardReady, () => voiceHang.syncAll(client).catch(() => {})); // a new gateway session drops the voice state

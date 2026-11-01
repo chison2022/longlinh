@@ -48,6 +48,7 @@ gameRoster.checkGameUid = async (_g, input, { exceptName = null } = {}) => {
 };
 gameRoster.claimGameUid = async (_g, name, uid) => (uidClaims.push([name, uid]), claimResult);
 gameRoster.releaseGameUid = async (g, id) => uidReleased.push([g, id]);
+gameRoster.releaseRequestUid = async (g, o) => (uidReleased.push(['revoke', g, o.uid, o.gameName, o.discordId]), o.uid ? o.gameName : null);
 guildConfigService.getConfigOrDefault = async () => config;
 guildConfigService.getConfig = async () => config;
 registrationService.saveMemberClass = async (...a) => {
@@ -1884,6 +1885,7 @@ describe('🤖 auto-approval (a roster name) and ↩️ Thu hồi', () => {
     await gate.handle(ask.i, ['gate', 'rv', String(request._id)]);
     assert.equal(assertModal(ask.log.find((l) => l[0] === 'showModal')[1]).custom_id, `gate:rvModal:${request._id}`);
     const before = w.rec.roleCalls.length;
+    request.gameUid = request.gameUid || '12345678'; // the approval gave this ID
     const { i, log } = interactionOf(w, { user: ADMIN, admin: true, fields: { reason: 'Không phải người trong bang' }, message: cardMessageOf(card) });
     await gate.handle(i, ['gate', 'rvModal', String(request._id)]);
     const removed = w.rec.roleCalls.slice(before).filter((c) => c[0] === 'remove');
@@ -1893,6 +1895,8 @@ describe('🤖 auto-approval (a roster name) and ↩️ Thu hồi', () => {
     assert.equal(reqs[0].decidedBy, ADMIN);
     assert.match(w.rec.dms.at(-1)[1].content, /Lý do: Không phải người trong bang/);
     assert.deepEqual(saved.unlinked, [[GUILD, [USER]]], 'the game name is freed for its real owner');
+    assert.deepEqual(uidReleased.filter((r) => r[0] === 'revoke'), [['revoke', GUILD, request.gameUid, request.gameName, USER]], 'the ID it gave is taken back');
+    assert.match(assertV2Message(last(log)).text, /🆔 Đã gỡ ID game `12345678`/);
     const done = last(log);
     assert.match(assertV2Message(done).text, new RegExp(`↩️ <@${ADMIN}> đã thu hồi`));
     assert.equal(done.components[0].toJSON().accent_color, 0xe74c3c);
