@@ -39,6 +39,8 @@ const state = {
   poolSort: 'order', // 'order' = registration order, 'class'
   noteEditing: null, // 'group-party' whose note is being typed
   enter: false, // the next redraw animates its overlay in
+  groupTab: 0, // the Nhóm shown in tab mode
+  legendOpen: false, // the 🎨 Phái popover
   autoDialog: false,
   addDialog: false, // ➕ Thêm người
   addError: '',
@@ -67,7 +69,7 @@ function h(tag, attrs, ...children) {
     else if (k.startsWith('on')) el.addEventListener(k.slice(2), v);
     else el.setAttribute(k, v === true ? '' : v);
   }
-  for (const c of children.flat()) {
+  for (const c of children.flat(Infinity)) {
     if (c === null || c === undefined || c === false) continue;
     el.append(c.nodeType ? c : document.createTextNode(String(c)));
   }
@@ -92,6 +94,23 @@ async function api(path, options = {}) {
 function flash(text) {
   toast(text, /lỗi|không|chưa lưu/i.test(text) ? 'warn' : 'info');
 }
+
+// ---------- layout modes ----------
+const tabMode = () => innerWidth < 900 || innerHeight < 720; // one Nhóm at a time, PT columns scroll sideways when they do not fit
+let lastTabMode = tabMode();
+function measure() {
+  const main = document.querySelector('main');
+  if (main) document.documentElement.style.setProperty('--main-h', `${main.clientHeight}px`);
+  const foot = document.querySelector('footer');
+  if (foot) document.documentElement.style.setProperty('--foot-h', `${foot.offsetHeight}px`);
+}
+window.addEventListener('resize', () => {
+  const m = tabMode();
+  if (m !== lastTabMode) {
+    lastTabMode = m;
+    if (state.data) render();
+  } else measure();
+});
 
 // ---------- phone layout ----------
 const phone = window.matchMedia('(max-width: 700px)');
@@ -203,6 +222,7 @@ function adopt(data) {
   state.notes = data.partyNotes || {};
   state.menu = null;
   state.fullPrev = null; // somebody else's edit or a reload: no celebration, just a new baseline
+  state.saveState = ''; // a fresh copy from the server: nothing is waiting to be saved
   state.version = data.version;
   state.dirty = false;
   state.selected = null;
@@ -305,7 +325,7 @@ function setNote(g, p, text) {
 
 // ---------- polling ----------
 async function poll() {
-  if (!state.warId || !state.data || drag || state.dirty || state.saving || state.confirming || state.menu || state.tasksDialog || state.autoDialog || state.addDialog || state.removedDialog || state.removeConfirm) return;
+  if (!state.warId || !state.data || drag || state.dirty || state.saving || state.menu || state.tasksDialog || state.addDialog) return;
   const r = await api(`/api/lineup/${state.warId}/version`).catch(() => null);
   if (!r || !r.ok) return;
   const pending = state.data.publish && state.data.publish.state === 'pending';
@@ -394,9 +414,7 @@ function onPointerUp(e) {
     return;
   }
   endDrag();
-  const slot = d.chip.closest('[data-zone="slot"]');
-  if (slot) tapSlot(Number(slot.dataset.g), Number(slot.dataset.p), Number(slot.dataset.s));
-  else tapPerson(d.id);
+  activateChip(d.chip, d.id);
 }
 
 function onPointerCancel(e) {
@@ -453,20 +471,40 @@ function removeButton(m) {
   return h('button', { class: 'x', title: 'Bỏ khỏi danh sách', 'aria-label': `Bỏ ${m.name} khỏi danh sách`, onpointerdown: (e) => e.stopPropagation(), onclick: (e) => { e.stopPropagation(); askRemove(m.id); } }, '✖');
 }
 
+// Tap / Enter / Space on a person: the same thing for a mouse click, a finger and the keyboard.
+function activateChip(el, id) {
+  const slot = el.closest('[data-zone="slot"]');
+  if (slot) tapSlot(Number(slot.dataset.g), Number(slot.dataset.p), Number(slot.dataset.s));
+  else tapPerson(id);
+}
+
 function chip(m, where) {
   const t = taskOf(m.id);
   const mates = matesText(m.id);
   const tail =
     where === 'pool'
       ? [h('span', { class: 'cls' }, [m.className, m.rolePref].filter(Boolean).join(' · ')), removeButton(m)]
-      : [m.manual ? h('span', { class: 'manual-mark', title: 'Thêm tay: không có nút Xem PT của tôi' }, 'tay') : null, t ? pill(t) : h('span', { class: 'pill none' }, 'Chưa giao'), h('span', { class: 'tag' }, classTag(m.className))];
+      : [m.manual ? h('span', { class: 'manual-mark', title: 'Thêm tay: không có nút Xem PT của tôi' }, 'tay') : null, t ? [pill(t), h('i', { class: 'tdot2', style: `--t:${taskColor(t.key)}`, title: t.label })] : h('span', { class: 'pill none' }, 'Chưa giao'), h('span', { class: 'tag' }, classTag(m.className))];
   return h(
     'div',
     {
       style: `--c:${m.classColor};--cd:${m.classMark || m.classColor}`,
       class: `chip${state.selected === m.id ? ' selected' : ''} movable${state.pop === m.id ? ' pop' : ''}`,
       'data-id': m.id,
+      role: 'button',
+      tabindex: '0',
+      'aria-label': [m.name, m.className, (t || {}).label || 'chưa giao nhiệm vụ'].filter(Boolean).join(' · '),
       onpointerdown: (e) => onPointerDown(e, m.id),
+      onkeydown: (e) => {
+        if (e.target !== e.currentTarget) return; // keys inside the ✖ button are its own
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          activateChip(e.currentTarget, m.id);
+        } else if (e.key === 'Escape' && state.selected) {
+          state.selected = null;
+          render();
+        }
+      },
       title: [m.name, m.linked ? `Discord: ${m.discordName}` : 'Chưa ghép tên game (đang hiện tên Discord)', m.className, mates ? `🔗 ${mates}` : ''].filter(Boolean).join('\n'),
     },
     classMark(m.classEmoji, m.classMark || m.classColor),
@@ -492,7 +530,7 @@ function poolView() {
   };
   const search = h('input', { type: 'search', placeholder: 'Tìm tên…', value: state.search, class: 'search', oninput: (e) => { state.search = e.target.value; fill(); } });
   const select = h('select', { class: 'filter', onchange: (e) => { state.classFilter = e.target.value; fill(); } }, h('option', { value: '' }, `Mọi phái (${rest.length})`), classes.map((c) => h('option', { value: c, selected: c === state.classFilter }, `${c} (${count(c)})`)));
-  const sortOptions = [['order', 'Thứ tự báo danh'], ['class', 'Theo phái']];
+  const sortOptions = [['order', 'Báo danh trước'], ['class', 'Theo phái']];
   const sort = h('select', { class: 'filter', title: 'Sắp xếp', onchange: (e) => { state.poolSort = e.target.value; fill(); } }, sortOptions.map(([v, label]) => h('option', { value: v, selected: state.poolSort === v }, label)));
   fill();
   return h('section', { class: `pool${state.sheetOpen ? ' open' : ''}`, 'data-zone': 'pool', onclick: (e) => e.target.closest('.chip') || tapPool() }, h('div', { class: 'pool-head' }, h('h2', null, 'Chưa xếp'), h('span', { class: 'badge' }, rest.length)), h('div', { class: 'tools' }, search), h('div', { class: 'tools' }, select, sort), list);
@@ -560,12 +598,19 @@ function partyView(g, p, byId) {
 function boardView() {
   const byId = memberById();
   const size = state.data.layout.partySize;
+  const tabs = tabMode();
+  const shown = tabs ? [Math.min(state.groupTab, state.layout.groups.length - 1)] : state.layout.groups.map((_, g) => g);
+  const counts = state.layout.groups.map((group) => [group.flat().length, group.length * size]);
+  const tabBar = tabs
+    ? h('div', { class: 'nhom-tabs', role: 'tablist' }, state.layout.groups.map((_, g) => h('button', { class: `tab g${g % 2}${shown[0] === g ? ' on' : ''}`, role: 'tab', 'aria-selected': shown[0] === g ? 'true' : 'false', onclick: () => { state.groupTab = g; render(); } }, `Nhóm ${g + 1}`, h('small', null, ` ${counts[g][0]}/${counts[g][1]}`))))
+    : null;
   return h(
     'div',
-    { class: 'board' },
-    state.layout.groups.map((group, g) => {
-      const total = group.length * size;
-      const n = group.flat().length;
+    { class: `board${tabs ? ' tabbed' : ''}` },
+    tabBar,
+    shown.map((g) => {
+      const group = state.layout.groups[g];
+      const [n, total] = counts[g];
       const pct = Math.round((n / total) * 100);
       const fill = h('div', { class: `fill${n === total ? ' full' : ''}`, style: `transform:scaleX(${(state.meterPrev[g] ?? pct) / 100})` });
       state.meterJobs.push({ el: fill, pct });
@@ -573,25 +618,23 @@ function boardView() {
       return h(
         'section',
         { class: `group g${g % 2}` },
-        h(
-          'div',
-          { class: 'group-head' },
-          h('h2', null, `Nhóm ${g + 1}`),
-          h('div', { class: 'meter', 'aria-hidden': 'true' }, fill),
-          h('span', { class: 'gcount' }, `${n}/${total}`),
-
-        ),
-        h('div', { class: 'parties' }, group.map((_, p) => partyView(g, p, byId)))
+        h('div', { class: 'group-head' }, h('h2', null, `Nhóm ${g + 1}`), h('div', { class: 'meter', 'aria-hidden': 'true' }, fill), h('span', { class: 'gcount' }, `${n}/${total}`)),
+        h('div', { class: 'parties', style: `--cols:${group.length}` }, group.map((_, p) => partyView(g, p, byId)))
       );
     })
   );
 }
 
-function legendView() {
+// 🎨 Phái: the class legend lives in a popover so the header stays one line.
+function legendButton() {
+  return h('button', { class: `small icon${state.legendOpen ? ' on' : ''}`, title: 'Các phái', 'aria-expanded': state.legendOpen ? 'true' : 'false', onclick: () => { state.legendOpen = !state.legendOpen; render(); } }, h('span', { class: 'ic' }, '🎨'), h('span', { class: 'lbl' }, ' Phái'));
+}
+
+function legendPop() {
   const used = new Set(state.data.members.map((m) => m.className).filter(Boolean));
   const list = (state.data.classes || []).filter((c) => used.has(c.name));
-  if (!list.length) return null;
-  return h('div', { class: 'legend' }, list.map((c) => h('span', { class: 'lg', style: `--c:${c.color};--cd:${c.mark || c.color}` }, classMark(c.emojiId, c.mark || c.color), h('span', null, c.name), h('span', { class: 'tag' }, c.tag || classTag(c.name)))));
+  if (!state.legendOpen || !list.length) return null;
+  return h('div', { class: 'legend-pop', onclick: () => { state.legendOpen = false; render(); } }, list.map((c) => h('span', { class: 'lg', style: `--c:${c.color};--cd:${c.mark || c.color}` }, classMark(c.emojiId, c.mark || c.color), h('span', null, c.name), h('span', { class: 'tag' }, c.tag || classTag(c.name)))));
 }
 
 function sheetToggle(waiting) {
@@ -786,6 +829,7 @@ async function peopleCall(method, path, body) {
   }
   await loadLineup().catch(() => {});
   state.addError = '';
+  if (state.removedDialog && !(state.data.removedMembers || []).length) state.removedDialog = false;
   render();
   return true;
 }
@@ -965,6 +1009,7 @@ function render() {
   const scroll = document.querySelector('.pool-list') ? document.querySelector('.pool-list').scrollTop : 0;
   const active = document.activeElement;
   const keepNote = active && active.id === 'note-edit' ? { start: active.selectionStart, end: active.selectionEnd } : null;
+  const focusedChip = document.activeElement && document.activeElement.classList && document.activeElement.classList.contains('chip') ? document.activeElement.dataset.id : null;
   const prevRects = captureRects();
   const oldOverlay = app.querySelector('.overlay');
   const fresh = state.enter; // overlays animate in only when they were just opened, not on every redraw
@@ -985,13 +1030,14 @@ function render() {
         stat('Đã xếp', placed, placed === total ? 'ok' : '', 'placed', total),
         stat('Chưa xếp', waiting, waiting ? 'warn' : 'ok', 'waiting'),
         h('span', { class: `save${saving ? ' pending' : ''}` }, h('i'), saving ? 'Đang lưu…' : state.saveState || 'Đã lưu'),
-        h('button', { class: 'magic', onclick: () => { state.autoDialog = true; state.enter = true; render(); } }, '✨ Gợi ý chia đội'),
-        h('button', { class: 'small', onclick: () => { state.addDialog = true; state.enter = true; render(); } }, '➕ Thêm người'),
-        (state.data.removedMembers || []).length ? h('button', { class: 'small', onclick: () => { state.removedDialog = true; state.enter = true; render(); } }, `Đã bỏ (${state.data.removedMembers.length})`) : null,
-        h('button', { class: 'small', onclick: () => { state.tasksDialog = true; state.enter = true; render(); } }, '🎯 Nhiệm vụ')
+        h('button', { class: 'magic', title: 'Gợi ý chia đội', onclick: () => { state.autoDialog = true; state.enter = true; render(); } }, h('span', { class: 'ic' }, '✨'), h('span', { class: 'lbl' }, ' Gợi ý chia đội')),
+        h('button', { class: 'small icon', title: 'Thêm người', onclick: () => { state.addDialog = true; state.enter = true; render(); } }, h('span', { class: 'ic' }, '➕'), h('span', { class: 'lbl' }, ' Thêm người')),
+        (state.data.removedMembers || []).length ? h('button', { class: 'small icon', title: 'Đã bỏ', onclick: () => { state.removedDialog = true; state.enter = true; render(); } }, h('span', { class: 'ic' }, '🗑'), h('span', { class: 'lbl' }, ` Đã bỏ (${state.data.removedMembers.length})`), h('span', { class: 'cnt' }, state.data.removedMembers.length)) : null,
+        h('button', { class: 'small icon', title: 'Nhiệm vụ', onclick: () => { state.tasksDialog = true; state.enter = true; render(); } }, h('span', { class: 'ic' }, '🎯'), h('span', { class: 'lbl' }, ' Nhiệm vụ')),
+        legendButton()
       )
     ),
-    legendView(),
+    legendPop(),
     h('main', null, boardView(), poolView()),
     h('footer', null, sheetToggle(waiting), publishView()),
     state.confirming ? confirmView() : null,
@@ -1012,6 +1058,11 @@ function render() {
   }
   const list = document.querySelector('.pool-list');
   if (list) list.scrollTop = scroll;
+  measure();
+  if (focusedChip) {
+    const again = app.querySelector(`.chip[data-id="${focusedChip}"]`);
+    if (again) again.focus({ preventScroll: true });
+  }
   const note = document.getElementById('note-edit');
   if (keepNote && note) {
     note.focus();

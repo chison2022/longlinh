@@ -300,3 +300,97 @@ button.danger:hover { background: rgba(179, 38, 30, .24); }
   .chip.movable:hover { transform: none; }
   * { transition-duration: 0ms !important; }
 }
+
+
+/* ======================================================================
+   Layout shell (Discord frames are small and odd-shaped): the window never scrolls, the board does. A Nhóm is ALWAYS one row of its five PT
+   columns (never 3 + 2); when five columns do not fit, one Nhóm is shown at a time (tabs) and the columns scroll sideways, snapping.
+   The pool is a side panel from 1100 px up, a bottom sheet below.
+   ====================================================================== */
+html, body { height: 100%; overflow: hidden; }
+#app { height: 100%; min-height: 0; }
+main { flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden; align-items: start; padding-bottom: 12px; scrollbar-width: thin; scrollbar-color: #bfb18d transparent; }
+footer { position: static; flex: none; padding: 8px 24px; }
+.pool { position: sticky; top: 0; max-height: var(--main-h, 70vh); }
+.board { gap: 12px; }
+.group-head { margin-bottom: 6px; }
+
+.parties { grid-template-columns: repeat(var(--cols, 5), minmax(var(--pt-min, 150px), 1fr)); gap: 8px; overflow-x: auto; scroll-snap-type: x proximity; padding-bottom: 4px; scrollbar-width: thin; }
+.party { scroll-snap-align: start; container-type: inline-size; container-name: pt; padding: 5.5px; }
+.party-head { gap: 4px 6px; padding: 2px 3px 6px; min-height: 30px; }
+.note-add, .note-quote, .note-input { margin-left: 3px; margin-right: 3px; }
+.slots { gap: 3px; }
+.slot { min-height: 34px; }
+.chip { min-height: 34px; padding: 4px 6px 4px 9px; gap: 6px; }
+.cls-icon { width: 22px; height: 22px; }
+.chip .tdot2 { display: none; width: 9px; height: 9px; border-radius: 50%; background: var(--t, #888); flex: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--t, #888) 25%, transparent); }
+@container pt (max-width: 235px) {
+  .chip .pill { display: none; }
+  .chip .tdot2 { display: inline-block; }
+  .chip .tag { display: none; }
+  .party-head .warns { margin-left: 0; font-size: 10px; }
+}
+@container pt (max-width: 175px) {
+  .chip { gap: 5px; padding-left: 8px; }
+  .manual-mark { display: none; }
+}
+@media (max-height: 700px) { .slot, .chip { min-height: 30px; } .cls-icon { width: 20px; height: 20px; } }
+
+/* header: one line from 1100 px up; the secondary buttons turn into icons below 1300 */
+header { flex-wrap: nowrap; gap: 8px 16px; padding: 8px 16px; }
+.hd-title { flex: 1 1 auto; flex-wrap: nowrap; min-width: 0; gap: 8px; }
+.hd-title h1 { font-size: 20px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.hd-sub { white-space: nowrap; }
+.hd-stats { flex-wrap: nowrap; gap: 6px; flex: none; }
+.stat { padding: 4px 10px; }
+button.icon.on { background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--seal); }
+.cnt { display: none; }
+@media (max-width: 1300px) { .lbl { display: none; } button.icon { padding: 4px 10px; } .cnt { display: inline; margin-left: 4px; font-size: 12px; font-weight: 700; } }
+@media (max-width: 1099px) { header { flex-wrap: wrap; } .hd-stats { flex-wrap: wrap; width: 100%; } }
+.legend-pop { position: absolute; right: 16px; top: 52px; z-index: 40; display: flex; flex-wrap: wrap; gap: 6px; max-width: min(560px, calc(100vw - 32px)); padding: 10px; background: var(--paper); border-radius: 12px; box-shadow: var(--elev-2), inset 0 0 0 1px var(--line); animation: fade-in var(--dur-fast) var(--ease-out); }
+.legend-pop .lg { display: inline-flex; align-items: center; gap: 8px; padding: 3px 12px 3px 3px; border-radius: 999px; background: rgba(247, 242, 230, .9); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--cd, #888) 45%, transparent); font-size: 13px; }
+.legend-pop .tag { color: var(--muted); font-size: 11px; font-weight: 600; }
+.legend-pop .cls-icon { width: 24px; height: 24px; }
+
+/* Nhóm tabs */
+.nhom-tabs { display: flex; gap: 6px; position: sticky; top: 0; z-index: 3; padding: 2px 0 6px; background: transparent; }
+.nhom-tabs .tab { flex: 1 1 0; min-height: 36px; border-radius: 10px; font-family: var(--serif); font-weight: 700; font-size: 15px; }
+.nhom-tabs .tab small { font-family: "gg sans", "Segoe UI", system-ui, sans-serif; font-weight: 500; color: var(--ink2); font-size: 12px; }
+.nhom-tabs .tab.g0.on { background: linear-gradient(135deg, rgba(47, 122, 92, .25), rgba(63, 154, 160, .15)); box-shadow: inset 0 0 0 2px #2f7a5c; color: #1f5a42; }
+.nhom-tabs .tab.g1.on { background: linear-gradient(135deg, rgba(179, 64, 47, .22), rgba(201, 144, 42, .15)); box-shadow: inset 0 0 0 2px #b3402f; color: #8a2c1f; }
+.board.tabbed .group-head { display: none; }
+
+/* the pool becomes the bottom sheet below 1100 px */
+@media (max-width: 1100px) {
+  main { grid-template-columns: minmax(0, 1fr); padding: 6px 12px 12px; gap: 12px; }
+  .sheet-toggle { display: block; flex: none; font-weight: 600; }
+  footer { display: flex; gap: 8px; align-items: center; padding: 6px 12px; height: auto; }
+  .publish { flex: 1; min-width: 0; flex-wrap: nowrap; gap: 8px; justify-content: flex-end; }
+  .publish .pub-state { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; font-size: 12px; }
+  .publish button.primary { flex: none; padding: 6px 12px; }
+  .pool { position: fixed; top: auto; left: 0; right: 0; bottom: var(--foot-h, 56px); height: min(55vh, 420px); max-height: none; z-index: 20; border-radius: 16px 16px 0 0; box-shadow: 0 -10px 28px rgba(38, 33, 28, .4); transform: translateY(calc(100% + 80px)); transition: transform var(--dur-base) var(--ease-out); }
+  .pool.open { transform: none; }
+}
+@media (max-width: 700px) {
+  :root { --pt-min: 250px; }
+  .editing footer { position: static; height: auto; padding: 6px 12px; }
+  .editing main { padding-bottom: 12px; }
+  .editing .pool { bottom: var(--foot-h, 60px); }
+  header { padding: 8px 12px; }
+  .hd-title h1 { font-size: 17px; }
+  .chip, .slot { min-height: 42px; }
+  button, button.small { min-height: 40px; }
+}
+
+@media (max-width: 1300px) and (min-width: 1101px) { main { grid-template-columns: minmax(0, 1fr) 250px; gap: 12px; } }
+
+/* toasts: bottom centre, above the footer (never on top of the header buttons) */
+#toasts { top: auto; right: auto; left: 50%; bottom: calc(var(--foot-h, 56px) + 12px); transform: translateX(-50%); width: min(440px, calc(100vw - 24px)); }
+.toast { animation-name: toast-up; }
+.toast.out { animation-name: toast-out; }
+@keyframes toast-up { from { opacity: 0; transform: translateY(16px) scale(.98); } }
+@keyframes toast-out { to { opacity: 0; transform: translateY(8px); } }
+.chip:focus-visible { outline: 2px solid var(--seal); outline-offset: -1px; }
+@media (max-height: 820px) and (min-height: 701px) { .slot, .chip { min-height: 30px; } .cls-icon { width: 20px; height: 20px; } .note-add { padding-bottom: 4px; } }
+.board { grid-template-columns: minmax(0, 1fr); }
+.group { min-width: 0; }

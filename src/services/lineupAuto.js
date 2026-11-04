@@ -1,5 +1,6 @@
 // "Gợi ý chia đội": a suggested lineup (pure: no DB, no Discord; the Activity client bundles it). The rules, in order:
-//   1. every PT gets at least one healer (Tố Vấn) and one tank (Thiết Y); when there are not enough, PTs are served in order
+//   0. how many people each PT gets: PT after PT is filled to 6 (26 people -> 6, 6, 6, 6, 2), Nhóm 1 first, Nhóm 2 only once Nhóm 1 is full;
+//   1. every PT that gets people has at least one healer (Tố Vấn) and one tank (Thiết Y); when there are not enough, PTs are served in order
 //      (Nhóm 1 PT 1 first), so a shortage lands in the last PTs;
 //   2. everyone else is placed at random (a re-run gives another layout).
 // More people than slots: the earlier registrations (createdAt) are placed, the rest stay unplaced.
@@ -45,26 +46,35 @@ function autoSplit({ members, layout = null, shape, mode = 'all', rng = Math.ran
   const pts = [];
   next.groups.forEach((g, gi) => g.forEach((party, pi) => pts.push({ g: gi, p: pi, party })));
   const free = (pt) => shape.partySize - pt.party.length;
-  const take = (id, pt) => {
-    pt.party.push(id);
+
+  // 0. how many new people each PT gets: PT after PT is topped up to a full party, Nhóm 1 first
+  const size = pts.map((pt) => pt.party.length);
+  const plan = pts.map(() => 0);
+  for (let n = 0; n < pool.length; n++) {
+    const best = size.findIndex((n) => n < shape.partySize);
+    if (best < 0) break;
+    size[best] += 1;
+    plan[best] += 1;
+  }
+  const take = (id, i) => {
+    pts[i].party.push(id);
+    plan[i] -= 1;
     waiting = waiting.filter((x) => x !== id);
   };
 
-  // 1. one healer and one tank in every PT, in PT order
+  // 1. one healer and one tank in every PT that gets people, in PT order
   for (const cls of [rules.healerClass, rules.tankClass]) {
-    for (const pt of pts) {
-      if (free(pt) > 0 && !pt.party.some((id) => sameClass(byId.get(id).className, cls))) {
+    pts.forEach((pt, i) => {
+      if (plan[i] > 0 && free(pt) > 0 && !pt.party.some((id) => sameClass(byId.get(id).className, cls))) {
         const pick = waiting.find((id) => sameClass(byId.get(id).className, cls)); // the list is shuffled: a random one
-        if (pick) take(pick, pt);
+        if (pick) take(pick, i);
       }
-    }
+    });
   }
-  // 2. the rest: each into a random PT that still has room
-  for (const id of waiting.slice()) {
-    const open = pts.filter((pt) => free(pt) > 0);
-    if (!open.length) break;
-    take(id, open[Math.floor(rng() * open.length)]);
-  }
+  // 2. the rest: random people into the places the plan left
+  pts.forEach((pt, i) => {
+    while (plan[i] > 0 && waiting.length) take(waiting[0], i);
+  });
 
   const placedNow = new Set(idsOf(next));
   return {

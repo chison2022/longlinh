@@ -46,6 +46,38 @@ describe('autoSplit', () => {
       assert.equal(count(party, 'Thiết Y', by) >= 1, i < 4, `tank in PT #${i + 1}`);
     });
   });
+  it('PTs are filled to 6 one after another: 26 people make 6, 6, 6, 6, 2 and Nhóm 2 stays empty', () => {
+    const members = crowd(26, { healers: 8, tanks: 8 });
+    const by = classOf(members);
+    const { layout } = autoSplit({ members, shape: SHAPE, rng: mulberry32(11) });
+    assert.deepEqual(layout.groups[0].map((p) => p.length), [6, 6, 6, 6, 2]);
+    assert.deepEqual(layout.groups[1].map((p) => p.length), [0, 0, 0, 0, 0]);
+    for (const party of layout.groups[0]) {
+      assert.ok(count(party, 'Tố Vấn', by) >= 1 && count(party, 'Thiết Y', by) >= 1);
+    }
+  });
+  it('Nhóm 2 only gets people once Nhóm 1 is full; its PTs without people need no healer', () => {
+    const members = crowd(33, { healers: 9, tanks: 9 });
+    const by = classOf(members);
+    const { layout } = autoSplit({ members, shape: SHAPE, rng: mulberry32(12) });
+    assert.deepEqual(layout.groups[0].map((p) => p.length), [6, 6, 6, 6, 6]);
+    assert.deepEqual(layout.groups[1].map((p) => p.length), [3, 0, 0, 0, 0]);
+    for (const party of [...layout.groups[0], layout.groups[1][0]]) assert.ok(count(party, 'Tố Vấn', by) >= 1);
+  });
+  it('fewer people than a PT: they all go into PT 1', () => {
+    const { layout } = autoSplit({ members: crowd(3), shape: SHAPE, rng: mulberry32(13) });
+    assert.deepEqual(layout.groups[0].map((p) => p.length), [3, 0, 0, 0, 0]);
+  });
+  it("'fill' keeps who is placed and tops the PTs up to 6 in order", () => {
+    const members = crowd(40, { healers: 10, tanks: 10 });
+    const current = rules.emptyLayout(SHAPE);
+    current.groups[0][0] = [members[0].id, members[1].id];
+    current.groups[0][3] = [members[2].id];
+    const { layout } = autoSplit({ members, layout: current, shape: SHAPE, mode: 'fill', rng: mulberry32(21) });
+    assert.deepEqual(layout.groups[0].map((p) => p.length), [6, 6, 6, 6, 6]);
+    assert.deepEqual(layout.groups[1].map((p) => p.length), [6, 4, 0, 0, 0]);
+    assert.deepEqual(layout.groups[0][0].slice(0, 2), [members[0].id, members[1].id], 'who was placed stays first');
+  });
   it('is random but seedable: the same seed gives the same layout, another seed another one', () => {
     const members = crowd(60);
     const run = (seed) => JSON.stringify(autoSplit({ members, shape: SHAPE, rng: mulberry32(seed) }).layout);
