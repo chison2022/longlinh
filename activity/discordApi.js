@@ -39,9 +39,30 @@ function createDiscordApi({ fetchFn = globalThis.fetch, clientId, clientSecret }
       body: new URLSearchParams({ client_id: clientId, client_secret: clientSecret, grant_type: 'authorization_code', code: String(code) }),
       signal: AbortSignal.timeout(8000),
     });
-    if (!res.ok) return null;
+    if (!res.ok) {
+      // Discord's reason (e.g. invalid_client = wrong CLIENT_SECRET, invalid_grant = bad/expired code); never the code or secret
+      const err = await res.json().catch(() => ({}));
+      console.warn(`[activity] code exchange refused: ${res.status} ${err.error || ''} ${err.error_description || ''}`.trim());
+      return null;
+    }
     const body = await res.json();
     return body && typeof body.access_token === 'string' ? body.access_token : null;
+  }
+
+  // Startup self-check: a client_credentials grant only succeeds with a valid CLIENT_ID + CLIENT_SECRET pair.
+  // -> true | false (wrong pair) | null (Discord unreachable)
+  async function checkCredentials() {
+    try {
+      const res = await fetchFn(`${API}/oauth2/token`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ client_id: clientId, client_secret: clientSecret, grant_type: 'client_credentials', scope: 'identify' }),
+        signal: AbortSignal.timeout(8000),
+      });
+      return res.ok;
+    } catch {
+      return null;
+    }
   }
 
   // user access token -> { id, name } | null
@@ -87,7 +108,7 @@ function createDiscordApi({ fetchFn = globalThis.fetch, clientId, clientSecret }
     }
   }
 
-  return { exchangeCode, userOf, memberOf, emojiImage };
+  return { exchangeCode, checkCredentials, userOf, memberOf, emojiImage };
 }
 
 module.exports = { createDiscordApi, API };

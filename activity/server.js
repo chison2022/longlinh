@@ -5,6 +5,7 @@
 require('dotenv').config({ quiet: true });
 const side = require('../src/sideDb');
 const { createApp } = require('./app');
+const { createDiscordApi } = require('./discordApi');
 
 // What the Activity needs in its database.
 const NEEDED = {
@@ -38,6 +39,10 @@ async function main() {
   if (absent.length) throw new Error(`Database is not up to date (missing: ${absent.join(', ')}). Cập nhật bot trước rồi mới chạy Activity. / Update and start the bot first, then run the Activity.`);
   const port = Number(process.env.PORT) || 3000;
   createApp().listen(port, '0.0.0.0', () => console.log(`[activity] listening on ${port}`));
+  // a wrong secret only shows up at the first login ("Discord từ chối mã đăng nhập"): say it in the log right away
+  const ok = await createDiscordApi({ clientId: process.env.CLIENT_ID, clientSecret: process.env.CLIENT_SECRET }).checkCredentials();
+  if (ok === false) console.error('[activity] CLIENT_ID / CLIENT_SECRET bị Discord từ chối: Reset Secret ở Developer Portal → OAuth2 rồi dán lại vào CLIENT_SECRET (không dấu cách thừa).');
+  else if (ok) console.log('[activity] CLIENT_ID / CLIENT_SECRET hợp lệ');
 }
 
 if (require.main === module) {
