@@ -298,7 +298,30 @@ function createApp({ fetchFn = globalThis.fetch, env = process.env, staticDir = 
 
   api.use((req, res) => res.status(404).json({ error: 'Không tìm thấy.' }));
   app.use('/api', api);
-  app.use(express.static(staticDir));
+  // Discord's client caches the page assets: index.html is never cached and points at app.js / style.css with a content hash,
+  // so every deploy loads the new bundle; the hashed URLs themselves can be cached for good.
+  let page = null; // built once per process (a deploy restarts it)
+  const fs = require('node:fs');
+  const sendPage = (req, res, next) => {
+    try {
+      if (!page) {
+        const hash = crypto.createHash('sha256');
+        for (const f of ['app.js', 'style.css']) hash.update(fs.readFileSync(path.join(staticDir, f)));
+        const v = hash.digest('hex').slice(0, 12);
+        page = fs.readFileSync(path.join(staticDir, 'index.html'), 'utf8').replace(/(src|href)="(app\.js|style\.css)"/g, `$1="$2?v=${v}"`);
+      }
+      res.set('Cache-Control', 'no-store').type('html').send(page);
+    } catch (err) {
+      next(err);
+    }
+  };
+  app.get(['/', '/index.html'], sendPage);
+  app.use(
+    express.static(staticDir, {
+      index: false,
+      setHeaders: (res) => res.set('Cache-Control', res.req && res.req.query && res.req.query.v ? 'public, max-age=31536000, immutable' : 'no-cache'),
+    })
+  );
   // Express 5 forwards async rejections here
   app.use((err, req, res, next) => {
     const status = Number(err && (err.status || err.statusCode));
