@@ -2,7 +2,8 @@
 // binary: callers load this module lazily (see interactions/gameRoster.js).
 const { createCanvas } = require('@napi-rs/canvas');
 const { chipColor, plainClass } = require('../../services/lineupStyle');
-const { ensureFonts, font, fit, drawChip, drawBar, loadEmojiImage, cleanName, WIDTH, MARGIN, BAR_H, CHIP, INK, MUTED, GRID } = require('./canvasKit');
+const { classPalette } = require('../../services/iconColor');
+const { iconTonesOf, ensureFonts, font, fit, drawChip, drawBar, loadEmojiImage, cleanName, WIDTH, MARGIN, BAR_H, CHIP, INK, MUTED, GRID } = require('./canvasKit');
 
 const PAGE_SIZE = 35;
 const ROW_H = 40;
@@ -45,15 +46,23 @@ async function renderRosterPngs({ title, subtitle = '', members = [], classes = 
   ensureFonts();
   const used = new Set(members.map((m) => m.className));
   const order = [...classes, ...[...used].filter((c) => !classes.includes(c))];
-  const colorOf = (className) => (styles[className] && styles[className].color) || chipColor(Math.max(order.indexOf(className), 0));
+  const tones = [];
+  const iconColors = new Map(); // class -> the colour of its icon
+  const colorOf = (className) => iconColors.get(className) || (styles[className] && styles[className].color) || chipColor(Math.max(order.indexOf(className), 0));
   const images = new Map();
   await Promise.all(
     [...used].map(async (c) => {
       const emoji = styles[c] && styles[c].emoji;
       const image = emoji && typeof fetchFn === 'function' ? await loadEmojiImage(emoji.id, fetchFn) : null;
-      if (image) images.set(c, image);
+      if (image) {
+        images.set(c, image);
+        tones.push([c, iconTonesOf(emoji.id, image)]);
+      }
     })
   );
+  // icon colours, collision-aware: two classes never share a hue (a pale-pink icon gives a rose next to a red one)
+  tones.sort((a, b) => order.indexOf(a[0]) - order.indexOf(b[0])); // the guild's class order decides who keeps a contested hue
+  for (const [c, v] of classPalette(tones, '#ffffff')) iconColors.set(c, v.mark);
 
   const pages = [];
   for (let i = 0; i < Math.max(members.length, 1); i += pageSize) pages.push(members.slice(i, i + pageSize));

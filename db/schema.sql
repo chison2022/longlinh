@@ -111,6 +111,7 @@ create table war_events (
   lineup_url        text,
   lineup_note       text not null default '',
   published_at      timestamptz,
+  open_pinged_at    timestamptz,                -- the "registration is open" role ping was sent (at most once per war)
   attendance_at     timestamptz,                -- when the "went for real" list of the result screen was imported; null = not yet
   attendance_source text not null default '',   -- file it came from
   created_at        timestamptz not null default now(),
@@ -146,23 +147,6 @@ create table attendance_entries (
   primary key (war_id, seen_name)
 );
 create index attendance_entries_character on attendance_entries (character_id);
-
--- The war lineup the Activity (drag-and-drop board) edits: one row per war. Read and written by the Activity web server and the bot.
-create table war_lineups (
-  war_id               char(24) primary key references war_events (id) on delete cascade,
-  guild_id             text not null,
-  layout               jsonb not null,            -- { groups: [ [ [discordId x up to 6] x 5 PT ] x groupCount ] }; unassigned people are simply absent
-  version              int not null default 0,    -- optimistic concurrency: every save bumps it
-  updated_by           text,
-  updated_at           timestamptz not null default now(),
-  publish_requested_at timestamptz,               -- set by the Activity; the bot (laptop) posts the image, then sets published_*
-  publish_requested_by text,
-  published_version    int,
-  published_at         timestamptz,
-  publish_error        text,
-  published_layout     jsonb,                     -- the exact layout the bot rendered and posted: what "Xem PT của tôi" answers from
-  claimed_at           timestamptz                -- taken by the bot's publisher while it posts (a claim older than 2 minutes is dead)
-);
 
 -- ---------------------------------------------------------------- guild events
 create table guild_events (

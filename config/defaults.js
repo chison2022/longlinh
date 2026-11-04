@@ -43,6 +43,7 @@ module.exports = {
     openTime: '00:00',
     lockBeforeHours: 2, // lock registration N hours before the war starts
     remindBeforeHours: 3, // remind N hours before the lock (0 = off)
+    openPing: false, // when the war message is auto-posted, one extra message tags the member role ("no mass tags" stays the default)
   },
 
   // Registration message refresh is debounced so 80 people clicking at once

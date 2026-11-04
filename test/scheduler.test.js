@@ -1,7 +1,7 @@
 // Scheduler tick tests with all DB / Discord access stubbed (no MongoDB needed).
 // Destructured imports in scheduler.js are captured at require time, so the stubs are
 // installed on the module exports BEFORE scheduler.js is required.
-const { describe, it, beforeEach, mock } = require('node:test');
+const { describe, it, beforeEach, afterEach, mock } = require('node:test');
 const assert = require('node:assert/strict');
 const { Collection } = require('discord.js');
 const { vn, sid } = require('./helpers');
@@ -49,7 +49,9 @@ for (const name of ['findFinished', 'markDone', 'findDueLocks', 'lockEvent', 'fi
   warService[name] = record(name);
 }
 
-const { tick } = require('../src/jobs/scheduler');
+const actBridge = require('../src/bot/actBridge');
+const openPing = require('../src/bot/openPing');
+const { tick, stop } = require('../src/jobs/scheduler');
 
 const NOW = vn(2026, 10, 6, 10, 0); // Tuesday
 const GUILD = '900000000000000001';
@@ -145,6 +147,19 @@ describe('scheduler.tick – finish/lock', () => {
     await tick(client, NOW);
     assert.deepEqual(callsOf('findDueLocks'), [[NOW]]);
     assert.deepEqual(callsOf('scheduleRefresh').map((c) => c[1]), ['a', 'b']);
+  });
+  it('copies each war it locks into the Activity database (once, at the lock)', async () => {
+    const seen = [];
+    const real = actBridge.onLocked;
+    actBridge.onLocked = (c, id) => seen.push(id);
+    try {
+      stubs.findDueLocks = async () => [{ _id: 'a' }, { _id: 'b' }];
+      stubs.lockEvent = async (id) => (id === 'a' ? { _id: id, status: 'locked' } : null); // b was locked by somebody else meanwhile
+      await tick(makeClient(), NOW);
+    } finally {
+      actBridge.onLocked = real;
+    }
+    assert.deepEqual(seen, ['a']);
   });
   it('an error in one event does not stop the others', async () => {
     stubs.findDueLocks = async () => [{ _id: 'bad' }, { _id: 'good' }];
@@ -297,6 +312,48 @@ describe('scheduler.tick – auto create', () => {
     });
     assert.equal(callsOf('postWarMessage').length, 1);
     assert.equal(callsOf('postWarMessage')[0][1], config);
+  });
+  describe('the registration-open role ping', () => {
+    const pinged = [];
+    const real = openPing.sendOpenPing;
+    beforeEach(() => {
+      pinged.length = 0;
+      openPing.sendOpenPing = async (client, cfg, event) => {
+        pinged.push([cfg.guildId, event.messageId]);
+      };
+    });
+    afterEach(() => {
+      openPing.sendOpenPing = real;
+      stop(); // forgets the post back-off of the failing-post case
+    });
+    it('is attempted once after the auto-created war message is posted', async () => {
+      stubs.listScheduledConfigs = async () => [{ ...config, memberRoleId: 'role', schedule: { ...config.schedule, openPing: true } }];
+      await tick(makeClient(), NOW);
+      assert.deepEqual(pinged, [[GUILD, 'm']]);
+    });
+    it('is attempted after the missing war message of an existing event is posted too', async () => {
+      const orphan = { _id: 'orphan-1', guildId: GUILD, status: 'open', startAt: vn(2026, 10, 11, 20, 0), deadlineAt: vn(2026, 10, 11, 18, 0), messageId: null, auto: true, createdAt: new Date(NOW.getTime() - 10 * 60 * 1000) };
+      stubs.listScheduledConfigs = async () => [{ ...config, memberRoleId: 'role', schedule: { ...config.schedule, openPing: true } }];
+      stubs.listActiveEvents = async () => [orphan];
+      await tick(makeClient(), NOW);
+      assert.deepEqual(pinged, [[GUILD, 'm']]);
+    });
+    it('is not attempted when the war message could not be posted', async () => {
+      stubs.listScheduledConfigs = async () => [{ ...config, memberRoleId: 'role', schedule: { ...config.schedule, openPing: true } }];
+      stubs.postWarMessage = async () => {
+        throw new Error('Missing Permissions');
+      };
+      await tick(makeClient(), NOW);
+      assert.deepEqual(pinged, []);
+    });
+    it('a failing ping does not touch the war post: the dashboard still refreshes', async () => {
+      stubs.listScheduledConfigs = async () => [{ ...config, memberRoleId: 'role', schedule: { ...config.schedule, openPing: true } }];
+      openPing.sendOpenPing = async () => {
+        throw new Error('boom');
+      };
+      await tick(makeClient(), NOW);
+      assert.equal(callsOf('postWarMessage').length, 1);
+    });
   });
   it('nobody is registered absent for a leave when the event is created: the war message is posted straight away', async () => {
     stubs.listScheduledConfigs = async () => [{ ...config, features: { leave: true } }];

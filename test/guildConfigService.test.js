@@ -14,7 +14,7 @@ describe('parseSettings – happy path', () => {
       classes: ['Thiết Y', 'Tố Vấn'],
       classEmojis: [],
       groupCount: 4,
-      schedule: { warDay: 0, warTime: '20:00', lockBeforeHours: 2, remindBeforeHours: 3, enabled: true, openDay: 1, openTime: '09:00' },
+      schedule: { warDay: 0, warTime: '20:00', lockBeforeHours: 2, remindBeforeHours: 3, enabled: true, openDay: 1, openTime: '09:00', openPing: false },
     });
   });
   it('keeps Unicode / emoji class names intact', () => {
@@ -147,7 +147,7 @@ describe('formatSettings', () => {
   const config = {
     classes: ['Thiết Y', 'Tố Vấn'],
     groupCount: 4,
-    schedule: { enabled: true, warDay: 0, warTime: '20:00', openDay: 1, openTime: '09:00', lockBeforeHours: 2, remindBeforeHours: 3 },
+    schedule: { enabled: true, warDay: 0, warTime: '20:00', openDay: 1, openTime: '09:00', lockBeforeHours: 2, remindBeforeHours: 3, openPing: false },
   };
   it('produces modal prefill strings', () => {
     assert.deepEqual(formatSettings(config), {
@@ -170,6 +170,24 @@ describe('formatSettings', () => {
     const r = parseSettings(formatSettings(c));
     const { openDay, openTime, ...rest } = c.schedule;
     assert.deepEqual(r.value.schedule, rest);
+  });
+  it('the "+tag" suffix of the open time turns the registration-open role ping on, and it round-trips', () => {
+    const on = parseSettings({ classes: 'A', groupCount: '1', war: 'CN 20:00', open: 'T2 12:00 +tag', timing: '2/3' });
+    assert.equal(on.error, undefined);
+    assert.deepEqual([on.value.schedule.enabled, on.value.schedule.openDay, on.value.schedule.openTime, on.value.schedule.openPing], [true, 1, '12:00', true]);
+    assert.equal(formatSettings({ classes: ['A'], groupCount: 1, schedule: { ...on.value.schedule } }).open, 'T2 12:00 +tag');
+    const again = parseSettings(formatSettings({ classes: ['A'], groupCount: 1, schedule: { ...on.value.schedule } }));
+    assert.equal(again.value.schedule.openPing, true);
+    for (const open of ['T2 12:00', 'T2 12:00 + TAG ']) {
+      const r = parseSettings({ classes: 'A', groupCount: '1', war: 'CN 20:00', open, timing: '2/3' });
+      assert.equal(r.value.schedule.openPing, open.includes('TAG'), open); // the suffix is case-insensitive, spaces allowed
+    }
+    const off = parseSettings({ classes: 'A', groupCount: '1', war: 'CN 20:00', open: '', timing: '2/3' });
+    assert.equal(off.value.schedule.openPing, false);
+    const alone = parseSettings({ classes: 'A', groupCount: '1', war: 'CN 20:00', open: '+tag', timing: '2/3' });
+    assert.equal(alone.value.schedule.enabled, false, '+tag without a time turns nothing on');
+    assert.equal(alone.value.schedule.openPing, false);
+    assert.match(parseSettings({ classes: 'A', groupCount: '1', war: 'CN 20:00', open: 'xyz +tag', timing: '2/3' }).error, /Giờ mở đăng ký/);
   });
   it('round-trips the shipped defaults', () => {
     const { warDurationMinutes, ...schedule } = defaults.schedule; // fixed duration is not a settings field

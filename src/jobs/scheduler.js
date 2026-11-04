@@ -14,6 +14,8 @@ const { scheduleRefresh, scheduleEventRefresh, schedulePanelRefresh, postWarMess
 const { scheduleSync } = require('../bot/sheetSync');
 const { scheduleDocSync } = require('../bot/eventDocSync');
 const lineupPublisher = require('./lineupPublisher');
+const actBridge = require('../bot/actBridge');
+const openPing = require('../bot/openPing');
 const departNotice = require('../bot/departNotice');
 const offNotice = require('../bot/offNotice');
 const { buildMinNotice } = require('../bot/ui/eventCard');
@@ -44,6 +46,7 @@ async function finishEvents(client, now) {
     if (await warService.markDone(e._id)) {
       logEvent('sched', 'done', { eid: String(e._id), guild: e.guildId });
       scheduleRefresh(client, e._id, 0);
+      actBridge.markDone(e._id); // the Activity stops offering it
     }
   });
 }
@@ -54,6 +57,7 @@ async function lockDue(client, now) {
     if (await warService.lockEvent(e._id)) {
       logEvent('sched', 'lock', { eid: String(e._id), guild: e.guildId });
       scheduleRefresh(client, e._id, 0);
+      actBridge.onLocked(client, e._id); // copy the war into the Activity's database (once, now that registration is closed)
     }
   });
 }
@@ -179,6 +183,7 @@ async function autoCreate(client, now) {
     logEvent('sched', 'create', { result, eid: String(event._id), guild: config.guildId, idSaved: posted.saved !== false });
     schedulePanelRefresh(client, config.guildId); // the dashboard shows the new event
     scheduleSync(client, config.guildId, 0, 'created'); // the sheet switches to the new war
+    await openPing.sendOpenPing(client, config, posted).catch((err) => console.error('[scheduler] open ping:', err && err.message)); // never affects the war post
   }
   await each('create', configs, async (config) => {
     const until = postBackoff.get(config.guildId);
@@ -310,6 +315,7 @@ async function tick(client, now = new Date()) {
       ['remind', remindDue],
       ['create', autoCreate],
       ['events', eventsStep],
+      ['activity', (client) => actBridge.catchUpSoon(client)], // closed wars the Activity does not know yet: in the background, the tick never waits for it
       ['depart', (client) => departNotice.noticeDue(client)], // a new game import: managers hear who left the game but is still on Discord
       ['offwarn', (client) => offNotice.noticeDue(client)], // ... and who has been off for N days
     ]) {
@@ -328,6 +334,7 @@ async function tick(client, now = new Date()) {
 function start(client) {
   if (task) return;
   tick(client);
+  actBridge.start();
   lineupPublisher.start(client); // posts the lineups asked for in the Activity (own 20 s interval)
   task = cron.schedule('* * * * *', () => tick(client), { timezone: 'Asia/Ho_Chi_Minh', noOverlap: true });
 }

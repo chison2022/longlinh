@@ -9,6 +9,8 @@ const features = require('./features');
 const MAX_CLASSES = 25; // one string select holds 25 options
 const MAX_CLASS_LENGTH = 40; // class name ends up inside customIds (100 chars max)
 const MAX_GROUPS = 4;
+const OPEN_PING_TOKEN = ' +tag'; // after the auto-open time: "T2 12:00 +tag" = tag the member role when the war message is posted
+const OPEN_PING_RE = /\s*\+\s*tag\s*$/i;
 
 // ---------- pure ----------
 
@@ -28,7 +30,7 @@ function formatSettings(config, styles) {
       .join('\n'),
     groupCount: String(config.groupCount ?? defaults.groupCount),
     war: formatDayTime(s.warDay, s.warTime),
-    open: s.enabled ? formatDayTime(s.openDay, s.openTime) : '',
+    open: s.enabled ? `${formatDayTime(s.openDay, s.openTime)}${s.openPing ? OPEN_PING_TOKEN : ''}` : '',
     timing: `${s.lockBeforeHours}/${s.remindBeforeHours}`,
   };
 }
@@ -86,12 +88,13 @@ function parseSettings({ classes, groupCount, war, open, timing }, { autoEmoji, 
   const remindBeforeHours = Number(m[2].replace(',', '.'));
   if (lockBeforeHours > 168 || remindBeforeHours > 168) return { error: 'Số giờ tối đa là 168.' };
 
-  const schedule = { warDay: warDt.day, warTime: warDt.time, lockBeforeHours, remindBeforeHours, enabled: false };
+  const schedule = { warDay: warDt.day, warTime: warDt.time, lockBeforeHours, remindBeforeHours, enabled: false, openPing: false };
 
-  if (String(open || '').trim()) {
-    const openDt = parseDayTime(open);
-    if (!openDt) return { error: 'Giờ mở đăng ký không hợp lệ. Ví dụ: T2 00:00 (để trống = tắt tự động)' };
-    Object.assign(schedule, { enabled: true, openDay: openDt.day, openTime: openDt.time });
+  const openText = String(open || '');
+  if (openText.replace(OPEN_PING_RE, '').trim()) {
+    const openDt = parseDayTime(openText.replace(OPEN_PING_RE, ''));
+    if (!openDt) return { error: 'Giờ mở đăng ký không hợp lệ. Ví dụ: T2 12:00 (thêm +tag để bot tag role thành viên; để trống = tắt tự động)' };
+    Object.assign(schedule, { enabled: true, openDay: openDt.day, openTime: openDt.time, openPing: OPEN_PING_RE.test(openText) });
     const cycle = computeCycle(schedule, new Date());
     if (cycle.openAt >= cycle.deadline) return { error: 'Giờ mở đăng ký phải trước hạn chốt.' };
   }
@@ -143,6 +146,7 @@ function invalidPatch(patch) {
     if (!day(sc.warDay) || !day(sc.openDay)) return 'schedule';
     if (sc.warDurationMinutes !== undefined && !(sc.warDurationMinutes >= 1)) return 'schedule';
     if ([sc.lockBeforeHours, sc.remindBeforeHours].some((v) => v !== undefined && !(v >= 0))) return 'schedule';
+    if (sc.openPing !== undefined && typeof sc.openPing !== 'boolean') return 'schedule';
   }
   return null;
 }

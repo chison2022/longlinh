@@ -4,14 +4,11 @@
 const crypto = require('node:crypto');
 const path = require('node:path');
 const express = require('express');
-const db = require('../src/db');
-const defaults = require('../config/defaults');
+const db = require('../src/sideDb');
 const lineupService = require('../src/services/lineupService');
 const rules = require('../src/services/lineupRules');
-const { getConfigOrDefault } = require('../src/services/guildConfigService');
-const { layoutOf } = require('../src/services/teamService');
-const { chipColor, plainClass } = require('../src/services/lineupStyle');
-const { matchClassStyles, styleOf, classCodes } = require('../src/bot/classStyle');
+const { chipColor } = require('../src/services/lineupStyle');
+const defaults = require('../config/defaults');
 const { createDiscordApi } = require('./discordApi');
 const { isManager } = require('./adminRule');
 
@@ -51,7 +48,7 @@ function publishState(row) {
 const CSP = "default-src 'self'; frame-ancestors https://discord.com https://*.discordsays.com";
 
 function createApp({ fetchFn = globalThis.fetch, env = process.env, staticDir = path.join(__dirname, 'public'), limits = {} } = {}) {
-  const discord = createDiscordApi({ fetchFn, clientId: env.CLIENT_ID, clientSecret: env.CLIENT_SECRET, botToken: env.DISCORD_TOKEN });
+  const discord = createDiscordApi({ fetchFn, clientId: env.CLIENT_ID, clientSecret: env.CLIENT_SECRET });
   const app = express();
   app.set('trust proxy', 1); // Render sits behind a proxy
   app.disable('x-powered-by');
@@ -66,6 +63,20 @@ function createApp({ fetchFn = globalThis.fetch, env = process.env, staticDir = 
   const writes = limiter(40);
   const tokens = limiter(20);
   const ipKey = (req) => `ip:${req.ip}`;
+  // Discord bans an IP that sends many invalid requests: failed token lookups are counted apart (30 / min / IP) and past that we stop asking Discord
+  const missMax = limits.miss || 30;
+  const misses = new Map(); // ip -> { n, reset }
+  const missBlocked = (ip) => {
+    const m = misses.get(ip);
+    return Boolean(m) && m.reset > Date.now() && m.n >= missMax;
+  };
+  const noteMiss = (ip) => {
+    const now = Date.now();
+    if (misses.size > 5000) for (const [k, v] of misses) if (v.reset <= now) misses.delete(k);
+    const m = misses.get(ip);
+    if (!m || m.reset <= now) misses.set(ip, { n: 1, reset: now + 60 * 1000 });
+    else m.n += 1;
+  };
   const authKey = (req) => `t:${crypto.createHash('sha256').update(String(req.headers.authorization || req.ip)).digest('hex').slice(0, 16)}`;
 
   const api = express.Router();
@@ -78,11 +89,11 @@ function createApp({ fetchFn = globalThis.fetch, env = process.env, staticDir = 
 
   // Class emoji images. An <img> cannot send the bearer token, so only ids resolved as the class emoji of a guild this server has served
   // are answered (never an open proxy), and by IP rate limit.
-  const knownEmojis = new Set();
   api.get('/emoji/:id', perIp(ipKey), async (req, res) => {
     const id = String(req.params.id);
     if (!SNOWFLAKE.test(id)) return res.status(400).json({ error: 'Mã emoji không hợp lệ.' });
-    if (!knownEmojis.has(id)) return res.status(404).json({ error: 'Không tìm thấy.' });
+    const known = await db.one('select 1 as ok from act_guilds where classes @> $1::jsonb limit 1', [JSON.stringify([{ emojiId: id }])]);
+    if (!known) return res.status(404).json({ error: 'Không tìm thấy.' });
     const png = await discord.emojiImage(id);
     if (!png) return res.status(404).json({ error: 'Không tìm thấy.' });
     res.set({ 'Content-Type': 'image/png', 'Cache-Control': 'public, max-age=86400' });
@@ -103,37 +114,47 @@ function createApp({ fetchFn = globalThis.fetch, env = process.env, staticDir = 
   api.use(async (req, res, next) => {
     const m = /^Bearer (\S{10,300})$/.exec(req.headers.authorization || '');
     if (!m) return res.status(401).json({ error: 'Chưa đăng nhập.' });
+    if (missBlocked(req.ip)) return res.status(429).json({ error: 'Quá nhiều lần đăng nhập sai, thử lại sau ít phút.' });
     const user = await discord.userOf(m[1]);
-    if (!user) return res.status(401).json({ error: 'Phiên đăng nhập hết hạn.' });
+    if (!user) {
+      noteMiss(req.ip);
+      return res.status(401).json({ error: 'Phiên đăng nhập hết hạn.' });
+    }
     req.token = m[1];
     req.user = user;
     return next();
   });
   api.use(general(authKey));
 
-  // -> { admin, member, config } or null (already answered 403)
+  // -> { member, guild } of a MANAGER, or null (already answered 403 / 404). The guild is the snapshot the bot took: who may edit comes from it.
   async function access(req, res, guildId) {
     const member = await discord.memberOf(req.token, guildId);
     if (!member) {
       res.status(403).json({ error: 'Bạn không ở trong máy chủ này.' });
       return null;
     }
-    const config = await getConfigOrDefault(guildId);
-    const guild = await discord.guildInfo(guildId);
-    const admin = isManager({ userId: req.user.id, member, guild, adminRoleIds: config.adminRoleIds || [] });
-    return { member, admin, config };
+    const guild = await lineupService.getGuild(guildId);
+    if (!guild) {
+      res.status(404).json({ error: 'Bang chưa có dữ liệu cho bảng xếp đội (bot chưa chốt đăng ký).' });
+      return null;
+    }
+    // the board is for Leaders only: everybody else gets the friendly card from the client (members see the posted image instead)
+    if (!isManager({ userId: req.user.id, member, guild })) {
+      res.status(403).json({ error: 'Bảng xếp đội chỉ dành cho Leader.', code: 'not_manager' });
+      return null;
+    }
+    return { member, guild };
   }
 
   // the war of the URL, only when the user is in its guild -> { war, ...access } or null (answered)
   async function warAccess(req, res) {
-    const warId = String(req.params.warId || '');
-    const war = db.isId(warId) ? await db.one('select id, guild_id as "guildId", title, start_at as "startAt", status from war_events where id = $1', [warId]) : null;
+    const war = await lineupService.getWar(String(req.params.warId || ''));
     if (!war) {
       res.status(404).json({ error: 'Bang chiến không tồn tại.' });
       return null;
     }
     const acc = await access(req, res, war.guildId);
-    return acc && { war, ...acc };
+    return acc && { war: { ...war, id: war.warId }, ...acc };
   }
 
   api.get('/wars', async (req, res) => {
@@ -141,11 +162,8 @@ function createApp({ fetchFn = globalThis.fetch, env = process.env, staticDir = 
     if (!SNOWFLAKE.test(guildId)) return res.status(400).json({ error: 'Thiếu mã máy chủ.' });
     const acc = await access(req, res, guildId);
     if (!acc) return undefined;
-    const wars = await db.q(
-      `select id, title, start_at as "startAt", status from war_events where guild_id = $1 and status in ('open', 'locked', 'published') order by start_at desc limit 10`,
-      [guildId]
-    );
-    return res.json({ wars, canEdit: acc.admin });
+    const wars = (await lineupService.listWars(guildId)).map((w) => ({ id: w.warId, title: w.title, startAt: w.startAt, status: w.status }));
+    return res.json({ wars });
   });
 
   api.get('/lineup/:warId/version', async (req, res) => {
@@ -158,46 +176,50 @@ function createApp({ fetchFn = globalThis.fetch, env = process.env, staticDir = 
   api.get('/lineup/:warId', async (req, res) => {
     const acc = await warAccess(req, res);
     if (!acc) return undefined;
-    const { war, config } = acc;
-    const shape = layoutOf(config);
-    const joiners = await lineupService.listJoiners(war.id);
-    const order = config.classes || [];
+    const { war, guild } = acc;
+    const shape = lineupService.shapeOfGuild(guild);
+    const order = (guild.classes || []).map((c) => c.name);
+    const classInfo = new Map((guild.classes || []).map((c) => [c.name, c]));
     const colorOf = (className) => chipColor(Math.max(order.findIndex((c) => rules.sameClass(c, className)), 0));
-    // the guild's class emojis, matched exactly as the bot does (settings override, slug, initials); colour dots when unavailable
-    const emojiList = (await discord.guildEmojis(war.guildId)) || [];
-    const styles = matchClassStyles(order, [], emojiList, config.classEmojis);
-    const emojiIdOf = (className) => {
-      const e = className ? styleOf(styles, className).emoji : null;
-      if (e) knownEmojis.add(e.id);
-      return e ? e.id : null;
-    };
-    const codes = classCodes(order);
-    const seenClasses = [...order.map((c) => plainClass(c)), ...joiners.map((j) => (j.className ? plainClass(j.className) : '')).filter(Boolean)];
-    const classes = [...new Set(seenClasses)].map((name) => ({ name, tag: codes.get(name) || '', color: colorOf(name), emojiId: emojiIdOf(name) }));
-    const members = joiners.map((j) => ({
+    const toMember = (j) => ({
       id: j.id,
-      name: j.name || j.id,
-      className: j.className ? plainClass(j.className) : '',
+      name: j.name || j.id, // the in-game name when the member is linked to a character, else the Discord name
+      discordName: j.discordName,
+      linked: j.linked,
+      manual: j.manual,
+      className: j.className,
       classColor: colorOf(j.className),
-      classEmoji: emojiIdOf(j.className),
+      classEmoji: (classInfo.get(j.className) || {}).emojiId || null,
       rolePref: ROLE_LABEL(j.rolePref),
+      taskDefault: rules.taskOfWish(j.rolePref), // the member's own wish = the task unless the leader chose another
       createdAt: j.createdAt,
-    }));
+    });
+    const members = (await lineupService.listMembers(war.id)).map(toMember);
+    const removedMembers = (await lineupService.listMembers(war.id, { removed: true })).map(toMember);
+    const seen = [...new Set([...order, ...members.map((m) => m.className)].filter(Boolean))];
+    const classes = seen.map((name) => ({ name, tag: (classInfo.get(name) || {}).tag || '', color: colorOf(name), emojiId: (classInfo.get(name) || {}).emojiId || null }));
     const row = await lineupService.getLineup(war.id);
     const joinedIds = new Set(members.map((m) => m.id));
     // fitted to the CURRENT shape (the group count may have changed since it was saved), so what the client sends back is saveable
     const lineup = rules.filterLayout(rules.reshapeLayout(row && row.layout, shape), (id) => joinedIds.has(id));
+    // a task belongs to a person on the list (placed or not: a hand-added person may get his task before he is placed)
+    const tasks = Object.fromEntries(Object.entries((row && row.tasks) || {}).filter(([k]) => joinedIds.has(k)));
+    const partyNotes = rules.validateNotes(row && row.partyNotes, shape).notes;
+    const taskList = await lineupService.listTasks(war.guildId);
     return res.json({
       war: { id: war.id, title: war.title, startAt: war.startAt, status: war.status },
       layout: shape,
-      rules: { healerClass: defaults.healerClass, tankClass: defaults.tankClass },
+      rules: lineupService.rulesOfGuild(guild),
       members,
+      removedMembers,
+      linkGroups: war.linkGroups || [],
       classes,
       lineup,
+      tasks,
+      partyNotes,
+      taskList,
       version: row ? row.version : 0,
       updatedBy: row ? row.updatedBy : null,
-      canEdit: acc.admin && war.status !== 'done',
-      me: { id: req.user.id, name: req.user.name },
       publish: publishState(row),
     });
   });
@@ -205,24 +227,73 @@ function createApp({ fetchFn = globalThis.fetch, env = process.env, staticDir = 
   api.put('/lineup/:warId', writes(authKey), async (req, res) => {
     const acc = await warAccess(req, res);
     if (!acc) return undefined;
-    if (!acc.admin) return res.status(403).json({ error: 'Chỉ quản lý mới được xếp đội.' });
     const body = req.body || {};
-    const out = await lineupService.saveLineup({ warId: acc.war.id, guildId: acc.war.guildId, layout: body.layout, expectedVersion: body.version, userId: req.user.id });
+    const out = await lineupService.saveLineup({ warId: acc.war.id, guildId: acc.war.guildId, layout: body.layout, expectedVersion: body.version, userId: req.user.id, tasks: body.tasks, partyNotes: body.partyNotes });
     if (out.conflict) {
       const cur = out.current;
       return res.status(409).json({ error: 'Đội hình vừa được người khác sửa.', current: cur && { layout: cur.layout, version: cur.version, updatedBy: cur.updatedBy } });
     }
     if (out.error) return res.status(400).json({ error: out.error });
-    return res.json({ version: out.lineup.version, layout: out.lineup.layout });
+    return res.json({ version: out.lineup.version, layout: out.lineup.layout, tasks: out.lineup.tasks, partyNotes: out.lineup.partyNotes });
   });
 
   api.post('/lineup/:warId/publish', writes(authKey), async (req, res) => {
     const acc = await warAccess(req, res);
     if (!acc) return undefined;
-    if (!acc.admin) return res.status(403).json({ error: 'Chỉ quản lý mới được công bố.' });
+    if (acc.war.status === 'open') return res.status(409).json({ error: 'Đăng ký đang mở lại — chờ quản lý chốt lại rồi mới công bố.' });
     const row = await lineupService.requestPublish(acc.war.id, req.user.id, acc.war.guildId);
     if (!row) return res.status(400).json({ error: 'Bang chiến đã kết thúc.' });
     return res.json({ publish: publishState(row) });
+  });
+
+  // people: a manager adds somebody by hand, takes somebody off the list, puts them back
+  const memberReply = (res, out) => (out.error ? res.status(400).json({ error: out.error }) : res.json({ ok: true, member: out.member || null }));
+  const managerOfWar = async (req, res) => {
+    const acc = await warAccess(req, res);
+    if (!acc) return null;
+    return acc;
+  };
+  api.post('/lineup/:warId/members', writes(authKey), async (req, res) => {
+    const acc = await managerOfWar(req, res);
+    if (!acc) return undefined;
+    const b = req.body || {};
+    return memberReply(res, await lineupService.addManualMember({ warId: acc.war.id, guildId: acc.war.guildId, userId: req.user.id, name: b.name, className: b.className, rolePref: b.rolePref, task: b.task }));
+  });
+  api.delete('/lineup/:warId/members/:key', writes(authKey), async (req, res) => {
+    const acc = await managerOfWar(req, res);
+    if (!acc) return undefined;
+    return memberReply(res, await lineupService.removeMember({ warId: acc.war.id, guildId: acc.war.guildId, userId: req.user.id, key: req.params.key }));
+  });
+  api.post('/lineup/:warId/members/:key/restore', writes(authKey), async (req, res) => {
+    const acc = await managerOfWar(req, res);
+    if (!acc) return undefined;
+    return memberReply(res, await lineupService.restoreMember({ warId: acc.war.id, guildId: acc.war.guildId, userId: req.user.id, key: req.params.key }));
+  });
+
+  // custom tasks of a guild (managers only): POST /tasks {guild, label, emoji}, PUT /tasks/:key {guild, label, emoji}, DELETE /tasks/:key?guild=
+  async function managerOf(req, res, guildId) {
+    if (!SNOWFLAKE.test(String(guildId || ''))) {
+      res.status(400).json({ error: 'Thiếu mã máy chủ.' });
+      return null;
+    }
+    return access(req, res, guildId);
+  }
+  const taskReply = (res, out) => (out.error ? res.status(400).json({ error: out.error }) : res.json({ taskList: out.tasks, affected: out.affected || 0 }));
+  api.post('/tasks', writes(authKey), async (req, res) => {
+    const body = req.body || {};
+    if (!(await managerOf(req, res, body.guild))) return undefined;
+    return taskReply(res, await lineupService.addTask(String(body.guild), body));
+  });
+  api.put('/tasks/:key', writes(authKey), async (req, res) => {
+    const body = req.body || {};
+    if (!rules.CUSTOM_KEY.test(req.params.key)) return res.status(404).json({ error: 'Nhiệm vụ không tồn tại.' });
+    if (!(await managerOf(req, res, body.guild))) return undefined;
+    return taskReply(res, await lineupService.renameTask(String(body.guild), req.params.key, body));
+  });
+  api.delete('/tasks/:key', writes(authKey), async (req, res) => {
+    if (!rules.CUSTOM_KEY.test(req.params.key)) return res.status(404).json({ error: 'Nhiệm vụ không tồn tại.' });
+    if (!(await managerOf(req, res, req.query.guild))) return undefined;
+    return taskReply(res, await lineupService.deleteTask(String(req.query.guild), req.params.key));
   });
 
   api.use((req, res) => res.status(404).json({ error: 'Không tìm thấy.' }));

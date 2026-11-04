@@ -3,10 +3,12 @@ const { describe, it, before, beforeEach } = require('node:test');
 const assert = require('node:assert/strict');
 const db = require('../src/db');
 const { setupDb, resetDb } = require('./pgdb');
+const { setupSide, resetSide } = require('./sidedb');
+const side = require('../src/sideDb');
 const svc = require('../src/services/lineupService');
 const rules = require('../src/services/lineupRules');
 const reg = require('../src/services/registrationService');
-const { seedWar } = require('./lineupFixture');
+const { seedWar, snapshot } = require('./lineupFixture');
 const { sid } = require('./helpers');
 
 const SHAPE = { groupCount: 2, partiesPerGroup: 5, partySize: 6 };
@@ -17,10 +19,15 @@ const layoutWith = (...parties) => {
 };
 let w;
 
-before(setupDb);
+before(async () => {
+  await setupDb();
+  await setupSide();
+});
 beforeEach(async () => {
   await resetDb();
+  await resetSide();
   w = await seedWar({ classes: ['Tố Vấn', 'Thiết Y', 'Huyết Hà', 'Huyết Hà', 'Toái Mộng'] });
+  await snapshot(w);
 });
 const save = (layout, expectedVersion, extra = {}) => svc.saveLineup({ warId: w.warId, guildId: w.guildId, layout, expectedVersion, userId: 'u1', ...extra });
 
@@ -77,21 +84,21 @@ describe('saveLineup', () => {
     assert.equal(stale2.conflict, true);
   });
   it('drops ids that are not joined (absent / not registered)', async () => {
-    await reg.upsertRegistration({ eventId: w.warId, guildId: w.guildId, discordId: w.ids[4], displayName: 'x', status: 'absent', className: null });
-    const out = await save(layoutWith([w.ids[0], w.ids[4], sid(999)]), 0);
+    await svc.removeMember({ warId: w.warId, guildId: w.guildId, userId: 'u1', key: w.ids[4] });
+    const out = await save(layoutWith([w.ids[0], w.ids[4], sid(999)]), 1); // removing a person moved the version to 1
     assert.deepEqual(out.lineup.layout.groups[0][0], [w.ids[0]]);
   });
   it('rejects a bad shape, a duplicate, another guild and a finished war', async () => {
     assert.match((await save({ groups: [] }, 0)).error, /Nhóm/);
     assert.match((await save(layoutWith([w.ids[0]], [w.ids[0]]), 0)).error, /hai lần/);
     assert.match((await save(layoutWith([w.ids[0]]), 0, { guildId: '800000000000000002' })).error, /không tồn tại/);
-    await db.q("update war_events set status = 'done' where id = $1", [w.warId]);
+    await side.q("update act_wars set status = 'done' where war_id = $1", [w.warId]);
     assert.match((await save(layoutWith([w.ids[0]]), 0)).error, /kết thúc/);
   });
-  it('listJoiners is in sign-up order and only joiners', async () => {
-    await reg.upsertRegistration({ eventId: w.warId, guildId: w.guildId, discordId: sid(50), displayName: 'Vắng', status: 'absent', className: 'Tố Vấn' });
-    const list = await svc.listJoiners(w.warId);
-    assert.deepEqual(list.map((j) => j.id), w.ids);
+  it('listMembers is in sign-up order and holds only the people who count', async () => {
+    await svc.removeMember({ warId: w.warId, guildId: w.guildId, userId: 'u1', key: w.ids[1] });
+    assert.deepEqual((await svc.listMembers(w.warId)).map((j) => j.id), w.ids.filter((id) => id !== w.ids[1]));
+    assert.deepEqual((await svc.listMembers(w.warId, { removed: true })).map((j) => j.id), [w.ids[1]]);
   });
 });
 
@@ -132,7 +139,7 @@ describe('publish request', () => {
   });
   it('refuses a finished war or another guild', async () => {
     assert.equal(await svc.requestPublish(w.warId, 'u1', '800000000000000002'), null);
-    await db.q("update war_events set status = 'done' where id = $1", [w.warId]);
+    await side.q("update act_wars set status = 'done' where war_id = $1", [w.warId]);
     assert.equal(await svc.requestPublish(w.warId, 'u1', w.guildId), null);
   });
 });
@@ -142,7 +149,7 @@ describe('claim and request matching', () => {
     await svc.requestPublish(w.warId, 'u1');
     assert.equal((await svc.claimPendingPublishes()).length, 1);
     assert.deepEqual(await svc.claimPendingPublishes(), []);
-    await db.q("update war_lineups set claimed_at = now() - interval '3 minutes' where war_id = $1", [w.warId]);
+    await side.q("update act_lineups set claimed_at = now() - interval '3 minutes' where war_id = $1", [w.warId]);
     assert.equal((await svc.claimPendingPublishes()).length, 1);
   });
   it('markPublished stores the posted layout and releases the claim', async () => {
@@ -176,10 +183,89 @@ describe('claim and request matching', () => {
   });
 });
 
-describe('migration', () => {
-  it('war_lineups exists and the migration is idempotent', async () => {
-    await db.ensureSchema();
-    await db.ensureSchema();
-    assert.equal((await db.q("select to_regclass('public.war_lineups') as t"))[0].t, 'war_lineups');
+describe('tasks and PT notes', () => {
+  const keysOf = async () => new Set((await svc.listTasks(w.guildId)).map((t) => t.key));
+  it('validateTasks: only placed people, unknown keys refused, "" kept as an explicit none', () => {
+    const valid = new Set(['def', 'c:x']);
+    assert.deepEqual(rules.validateTasks({ a: 'def', b: '', z: 'c:x' }, ['a', 'b'], valid), { ok: true, tasks: { a: 'def', b: '' } });
+    assert.equal(rules.validateTasks({ a: 'nope' }, ['a'], valid).ok, false);
+    assert.equal(rules.validateTasks([], ['a'], valid).ok, false);
+    assert.deepEqual(rules.validateTasks(undefined, ['a'], valid), { ok: true, tasks: {} });
+  });
+  it('notes are trimmed, capped at 80 chars, mentions and @ stripped, strange keys dropped', () => {
+    const out = rules.validateNotes({ '0-0': '  hi   @everyone <@123456> @here  ', '1-4': 'x'.repeat(200), '5-0': 'out', '0-9': 'out', bad: 'x', '0-1': '   ' }, SHAPE).notes;
+    assert.deepEqual(Object.keys(out).sort(), ['0-0', '1-4']);
+    assert.equal(out['0-0'], 'hi everyone here');
+    assert.equal(out['1-4'].length, 80);
+  });
+  it('taskOfWish / effectiveTasks: the own wish is the default, any = none, an explicit choice wins', () => {
+    assert.equal(rules.taskOfWish('daytru'), 'daytru');
+    assert.equal(rules.taskOfWish('mobile'), 'daytru');
+    assert.equal(rules.taskOfWish('any'), null);
+    const l = layoutWith(['a', 'b', 'c']);
+    assert.deepEqual(rules.effectiveTasks(l, { b: 'vattu', c: '' }, (id) => ({ a: 'def', b: 'cong', c: 'cong' })[id]), { a: 'def', b: 'vattu', c: '' });
+  });
+  it('readSnapshot reads old layout-only snapshots and the new shape', () => {
+    const l = layoutWith(['a']);
+    assert.deepEqual(rules.readSnapshot(l), { layout: l, tasks: {}, notes: {}, names: {} });
+    assert.deepEqual(rules.readSnapshot({ layout: l, tasks: { a: 'def' }, notes: { '0-0': 'n' }, names: { def: { label: 'Def' } } }).tasks, { a: 'def' });
+    assert.equal(rules.readSnapshot(null), null);
+    assert.equal(rules.readSnapshot({}), null);
+  });
+  it('pruneExtras follows a reshaped layout', () => {
+    const l = layoutWith(['a']);
+    assert.deepEqual(rules.pruneExtras(l, { a: 'def', gone: 'cong' }, { '0-0': 'n', '1-1': 'm', '7-0': 'x' }, SHAPE), { tasks: { a: 'def' }, notes: { '0-0': 'n', '1-1': 'm' } });
+    assert.deepEqual(rules.pruneExtras(l, {}, { '1-0': 'm' }, { groupCount: 1, partiesPerGroup: 5, partySize: 6 }).notes, {});
+  });
+  it('saveLineup stores tasks and notes under the same version; stale versions still conflict; unknown tasks are refused', async () => {
+    const l = layoutWith([w.ids[0], w.ids[1]]);
+    const ok = await save(l, 0, { tasks: { [w.ids[0]]: 'cong', [w.ids[1]]: '', [w.ids[3]]: 'def' }, partyNotes: { '0-0': 'PT1 giữ trụ' } });
+    assert.equal(ok.ok, true);
+    assert.deepEqual(ok.lineup.tasks, { [w.ids[0]]: 'cong', [w.ids[1]]: '', [w.ids[3]]: 'def' }, 'a listed person keeps his task even when not placed; keys not on the list are dropped');
+    assert.deepEqual(ok.lineup.partyNotes, { '0-0': 'PT1 giữ trụ' });
+    assert.equal((await save(l, 0, { tasks: {} })).conflict, true);
+    assert.match((await save(l, 1, { tasks: { [w.ids[0]]: 'c:khong-co' } })).error, /Nhiệm vụ/);
+    const keep = await save(l, 1, {}); // nothing sent: tasks and notes are left alone
+    assert.deepEqual(keep.lineup.tasks, { [w.ids[0]]: 'cong', [w.ids[1]]: '', [w.ids[3]]: 'def' });
+    assert.equal((await save(l, 2, { tasks: {}, partyNotes: {} })).lineup.partyNotes['0-0'], undefined);
+  });
+  it('custom tasks: add, rename, limits, duplicates; a custom key is accepted by saveLineup', async () => {
+    const added = await svc.addTask(w.guildId, { label: '  Thủ trụ giữa @all ', emoji: '🏰' });
+    assert.equal(added.ok, true);
+    const mine = added.tasks.find((t) => !t.builtin);
+    assert.deepEqual([mine.key, mine.label, mine.emoji], ['c:thu-tru-giua-all', 'Thủ trụ giữa all', '🏰']);
+    assert.equal(added.tasks.length, 5);
+    assert.match((await svc.addTask(w.guildId, { label: 'thủ trụ giữa all' })).error, /trùng/);
+    assert.match((await svc.addTask(w.guildId, { label: '' })).error, /trống/);
+    assert.match((await svc.addTask(w.guildId, { label: 'abc', emoji: 'chữ' })).error, /emoji/);
+    assert.equal((await svc.renameTask(w.guildId, mine.key, { label: 'Giữ trụ', emoji: '' })).tasks[4].label, 'Giữ trụ');
+    assert.match((await svc.renameTask(w.guildId, 'c:khong', { label: 'x' })).error, /không tồn tại/);
+    for (let i = 0; i < 14; i++) await svc.addTask(w.guildId, { label: `Việc ${i}` });
+    assert.match((await svc.addTask(w.guildId, { label: 'Quá nhiều' })).error, /Tối đa 15/);
+    assert.equal((await save(layoutWith([w.ids[0]]), 0, { tasks: { [w.ids[0]]: mine.key } })).ok, true);
+  });
+  it('deleting a task in use sends its holders back to "Chưa giao" and moves the version; the other guild is untouched', async () => {
+    const t = (await svc.addTask(w.guildId, { label: 'Gọi boss' })).tasks.find((x) => !x.builtin);
+    await save(layoutWith([w.ids[0], w.ids[1]]), 0, { tasks: { [w.ids[0]]: t.key, [w.ids[1]]: 'cong' } });
+    const out = await svc.deleteTask(w.guildId, t.key);
+    assert.equal(out.affected, 1);
+    assert.equal(out.tasks.length, 4);
+    const row = await svc.getLineup(w.warId);
+    assert.deepEqual(row.tasks, { [w.ids[0]]: '', [w.ids[1]]: 'cong' });
+    assert.equal(row.version, 2);
+    assert.match((await svc.deleteTask(w.guildId, t.key)).error, /không tồn tại/);
+    assert.ok(!(await keysOf()).has(t.key));
+  });
+});
+
+describe('side schema', () => {
+  it('act_* tables exist and the schema script is idempotent', async () => {
+    await side.ensureSideSchema();
+    await side.ensureSideSchema();
+    assert.equal((await side.q("select to_regclass('public.act_lineups') as t"))[0].t, 'act_lineups');
+  });
+  it('the main database has no lineup tables any more', async () => {
+    assert.equal((await db.q("select to_regclass('public.war_lineups') as a, to_regclass('public.lineup_tasks') as b"))[0].a, null);
+    assert.equal((await db.q("select to_regclass('public.lineup_tasks') as b"))[0].b, null);
   });
 });

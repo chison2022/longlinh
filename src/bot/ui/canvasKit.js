@@ -1,7 +1,8 @@
 // Canvas drawing helpers of the PNG tables (pure: no Discord, no DB). Class emoji do not render reliably in canvas, so a class is
 // a coloured rounded square (or the server emoji image) before the name. The font ships with the repo (OFL).
 const path = require('node:path');
-const { GlobalFonts, loadImage } = require('@napi-rs/canvas');
+const { GlobalFonts, loadImage, createCanvas } = require('@napi-rs/canvas');
+const { dominantColors } = require('../../services/iconColor');
 const { fontDir } = require('../../paths');
 
 const FAMILY = 'Be Vietnam Pro';
@@ -51,6 +52,26 @@ async function loadEmojiImage(id, fetchFn) {
   return promise;
 }
 
+// The tones of a class icon (strongest first, hex), cached per emoji id for the process. [] = none / failed.
+// The class palette (collision-aware, see services/iconColor.js) is built from these by the image that draws the classes.
+const iconTones = new Map();
+function iconTonesOf(id, image) {
+  if (iconTones.has(id)) return iconTones.get(id);
+  let tones = [];
+  try {
+    const w = Math.min(image.width || 48, 64);
+    const h = Math.min(image.height || 48, 64);
+    const canvas = createCanvas(w, h);
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(image, 0, 0, w, h);
+    tones = dominantColors(ctx.getImageData(0, 0, w, h).data, w, h, 3).map((t) => t.hex);
+  } catch {
+    tones = [];
+  }
+  iconTones.set(id, tones);
+  return tones;
+}
+
 const INK = '#1f2937';
 const MUTED = '#6b7280';
 const GRID = '#c4cad4';
@@ -92,6 +113,7 @@ function drawChip(ctx, x, y, color, image) {
 // Forget the cached emoji images (tests).
 function clearEmojiCache() {
   emojiCache.clear();
+  iconTones.clear();
 }
 
 function drawBar(ctx, text, y, color) {
@@ -103,4 +125,4 @@ function drawBar(ctx, text, y, color) {
   ctx.fillText(text, MARGIN + 16, y + BAR_H / 2 + 1);
 }
 
-module.exports = { ensureFonts, font, fit, drawChip, drawBar, loadEmojiImage, clearEmojiCache, cleanName, WIDTH, MARGIN, BAR_H, CHIP, INK, MUTED, GRID };
+module.exports = { iconTonesOf, ensureFonts, font, fit, drawChip, drawBar, loadEmojiImage, clearEmojiCache, cleanName, WIDTH, MARGIN, BAR_H, CHIP, INK, MUTED, GRID };

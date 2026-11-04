@@ -17,3 +17,4 @@ tmp-upload/
 
 # Activity client bundle (built by npm run activity:build)
 activity/public/app.js
+.neon

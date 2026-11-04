@@ -109,7 +109,7 @@ function messageLink(event) {
 const EVENT_SQL = `select w.id as "_id", w.guild_id as "guildId", w.title, w.start_at as "startAt", w.deadline_at as "deadlineAt",
   w.remind_at as "remindAt", w.reminded, w.status, w.channel_id as "channelId", w.message_id as "messageId",
   w.post_attempt_at as "postAttemptAt", w.manual_remind_at as "manualRemindAt", w.auto, w.lineup_url as "lineupUrl",
-  w.lineup_note as "lineupNote", w.published_at as "publishedAt", w.created_at as "createdAt", w.updated_at as "updatedAt"
+  w.lineup_note as "lineupNote", w.published_at as "publishedAt", w.open_pinged_at as "openPingedAt", w.created_at as "createdAt", w.updated_at as "updatedAt"
   from war_events w`;
 
 const res = (n) => ({ matchedCount: n, modifiedCount: n, acknowledged: true });
@@ -235,6 +235,22 @@ function publishEvent(eventId, snapshotAt = new Date(), { advance = true } = {})
   return transition(eventId, ['open', 'locked', 'published'], set);
 }
 
+// Takes the right to send the "registration is open" role ping: true only for the caller that set it (a retry / restart never pings twice).
+async function claimOpenPing(eventId) {
+  const rows = await db.q('update war_events set open_pinged_at = now() where id = $1 and open_pinged_at is null returning id', [String(eventId)]);
+  return rows.length === 1;
+}
+
+// Wars whose registration is closed (locked / published) in every guild: the ones the Activity can show (the actSnapshot catch-up).
+function listClosed() {
+  return db.q(`${EVENT_SQL} where w.status in ('locked', 'published') order by w.start_at desc`);
+}
+
+// Wars that finished in the last `days` days (the Activity's copy is marked done for them when it missed it).
+function listRecentDone(days = 14) {
+  return db.q(`${EVENT_SQL} where w.status = 'done' and w.start_at > $1`, [new Date(Date.now() - days * 24 * HOUR)]);
+}
+
 function findDueLocks(now) {
   return db.q(`${EVENT_SQL} where w.status = 'open' and w.deadline_at <= $1`, [now]);
 }
@@ -313,6 +329,9 @@ module.exports = {
   reopenEvent,
   publishEvent,
   findDueLocks,
+  listClosed,
+  claimOpenPing,
+  listRecentDone,
   findDueReminders,
   claimReminder,
   MANUAL_REMIND_COOLDOWN_MS,

@@ -21,11 +21,9 @@ const recall = (map, key, ttl) => {
   return hit && Date.now() - hit.at < (hit.value === null ? FAIL_TTL_MS : ttl) ? hit.value : undefined;
 };
 
-function createDiscordApi({ fetchFn = globalThis.fetch, clientId, clientSecret, botToken } = {}) {
+function createDiscordApi({ fetchFn = globalThis.fetch, clientId, clientSecret } = {}) {
   const users = new Map(); // token hash -> user | null
   const members = new Map(); // `${token hash}:${guildId}` -> member | null
-  const guilds = new Map(); // guildId -> { id, ownerId, roles } | null
-  const emojiLists = new Map(); // guildId -> [{ id, name, animated, managed, roleIds }] | null
   const images = new Map(); // emoji id -> Buffer (LRU: a hit is re-inserted)
 
   async function json(url, headers) {
@@ -68,41 +66,6 @@ function createDiscordApi({ fetchFn = globalThis.fetch, clientId, clientSecret, 
     return member;
   }
 
-  // The guild's owner and role permissions through the bot token (REST only). null without a token or on failure.
-  async function guildInfo(guildId) {
-    const hit = recall(guilds, guildId, GUILD_TTL_MS);
-    if (hit !== undefined) return hit;
-    let info = null;
-    if (botToken) {
-      const headers = { Authorization: `Bot ${botToken}` };
-      try {
-        const [g, roles] = await Promise.all([json(`${API}/guilds/${guildId}`, headers), json(`${API}/guilds/${guildId}/roles`, headers)]);
-        if (g && roles) info = { id: String(guildId), ownerId: String(g.owner_id), roles: roles.map((r) => ({ id: String(r.id), permissions: String(r.permissions) })) };
-      } catch {
-        info = null;
-      }
-    }
-    remember(guilds, guildId, info);
-    return info;
-  }
-
-  // The guild's custom emojis through the bot token, in the shape classStyle.matchClassStyles reads. null without a token / on failure.
-  async function guildEmojis(guildId) {
-    const hit = recall(emojiLists, guildId, GUILD_TTL_MS);
-    if (hit !== undefined) return hit;
-    let list = null;
-    if (botToken) {
-      try {
-        const rows = await json(`${API}/guilds/${guildId}/emojis`, { Authorization: `Bot ${botToken}` });
-        if (Array.isArray(rows)) list = rows.filter((e) => e.available !== false && e.name).map((e) => ({ id: String(e.id), name: e.name, animated: Boolean(e.animated), managed: Boolean(e.managed), roleIds: (e.roles || []).map(String) }));
-      } catch {
-        list = null;
-      }
-    }
-    remember(emojiLists, guildId, list);
-    return list;
-  }
-
   // The PNG of a custom emoji (static, 48 px) from the CDN, cached. -> Buffer | null
   async function emojiImage(id) {
     if (images.has(id)) {
@@ -124,7 +87,7 @@ function createDiscordApi({ fetchFn = globalThis.fetch, clientId, clientSecret, 
     }
   }
 
-  return { exchangeCode, userOf, memberOf, guildInfo, guildEmojis, emojiImage };
+  return { exchangeCode, userOf, memberOf, emojiImage };
 }
 
 module.exports = { createDiscordApi, API };

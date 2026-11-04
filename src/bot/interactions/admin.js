@@ -10,6 +10,7 @@ const { isAdmin } = require('../permissions');
 const { buildCreateModal, buildSettingsModal, buildSheetModal, buildOffWarnModal } = require('../ui/settingsModal');
 const gateway = require('../../services/sheets/gateway');
 const sheetSync = require('../sheetSync');
+const actBridge = require('../actBridge');
 const { postWarMessage, moveWarMessage, scheduleRefresh, schedulePanelRefresh, refreshNow, refreshPanelNow } = require('../refresher');
 const { buildSheetView } = require('../ui/sheetView');
 const { NO_PERMISSION, eph } = require('./common');
@@ -169,6 +170,8 @@ async function onLock(interaction, config) {
   if (!updated) return interaction.editReply('Trạng thái vừa thay đổi, hãy thử lại.');
   scheduleRefresh(interaction.client, event._id, 0);
   sheetSync.scheduleSync(interaction.client, interaction.guildId);
+  if (lockResult.result === 'locked') actBridge.onLocked(interaction.client, event._id); // the Activity's copy of the war
+  else actBridge.onReopened(event._id); // the board cannot publish while registration is open
   logEvent('admin', 'lock', { ...ixCtx(interaction), eid: String(event._id), ...lockResult });
   const regs = await listRegistrations(event._id);
   return interaction.editReply(`${message}\n${countsLine(regs)}`);
@@ -352,7 +355,7 @@ async function onSettingsSubmit(interaction, config) {
       `Môn phái (${saved.classes.length}): ${saved.classes.join(', ')}`,
       `Số nhóm: ${saved.groupCount} (mỗi nhóm ${layout.partiesPerGroup} PT × ${layout.partySize})`,
       `Lịch đánh: ${formatDayTime(s.warDay, s.warTime)} · chốt trước ${s.lockBeforeHours} giờ · nhắc trước hạn ${s.remindBeforeHours} giờ`,
-      `Tự mở đăng ký: ${s.enabled ? formatDayTime(s.openDay, s.openTime) : 'tắt'}`,
+      `Tự mở đăng ký: ${s.enabled ? formatDayTime(s.openDay, s.openTime) : 'tắt'}${s.enabled && s.openPing ? ' · tag role thành viên: bật' : ''}`,
     ].join('\n')
   );
 }

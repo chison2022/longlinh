@@ -29,11 +29,11 @@ function buildSettingsModal(config, styles) {
       }),
       textField('groupCount', `Số nhóm (mỗi nhóm ${defaults.partiesPerGroup} PT × ${defaults.partySize})`, { value: v.groupCount, maxLength: 1, description: '1-4 nhóm' }),
       textField('war', 'Lịch đánh (vd: T7 20:00)', { value: v.war, maxLength: 20, description: 'CN, T2 … T7 + giờ (giờ Việt Nam)' }),
-      textField('open', 'Tự mở đăng ký (vd: T2 00:00)', {
+      textField('open', 'Tự mở đăng ký (vd: T2 12:00 +tag)', {
         value: v.open,
         required: false,
         maxLength: 20,
-        description: 'Để trống = tắt tự động tạo bang chiến',
+        description: 'Thêm +tag = bot tag role thành viên khi mở báo danh. Để trống = tắt tự động tạo bang chiến',
       }),
       textField('timing', 'Hạn chốt / nhắc (giờ, vd: 2/3)', {
         value: v.timing,
