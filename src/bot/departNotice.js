@@ -8,7 +8,7 @@ const { getConfigOrDefault, isOn } = require('../services/guildConfigService');
 const warService = require('../services/warService');
 const { listRegistrations } = require('../services/registrationService');
 const { ensureMembers } = require('./memberCache');
-const { buildDepartNotice, noticeParts } = require('./ui/departNotice');
+const { buildDepartNotice, noticeParts, MAX_MERGE } = require('./ui/departNotice');
 const { v2Create } = require('./ui/common');
 const { logEvent } = require('../eventLog');
 
@@ -81,12 +81,17 @@ async function noticeGuild(client, guildId, { guild = null, config = null } = {}
     }
     const channel = await client.channels.fetch(cfg.adminChannelId);
     const at = new Date();
-    const { war, ids: joined } = await stillJoined(guildId, departed);
-    await channel.send(v2Create(buildDepartNotice({ rosterId, importedAt: roster.importedAt, departed, joined, warTitle: war ? war.title : '' })));
+    // somebody whose name is gone while a roster name nobody holds is nearly the same most likely only has another name: listed apart,
+    // and kept away from the unlink / unregister buttons
+    const hints = departure.mergeHints(departed, roster.members, linked);
+    const gone = departed.filter((d) => !hints.has(d.discordId));
+    const maybe = departed.filter((d) => hints.has(d.discordId)).map((d) => ({ id: d.discordId, ...hints.get(d.discordId) }));
+    const { war, ids: joined } = await stillJoined(guildId, gone);
+    await channel.send(v2Create(buildDepartNotice({ rosterId, importedAt: roster.importedAt, departed: gone, joined, warTitle: war ? war.title : '', maybe })));
     // the unlink button may touch only the people the lines really showed
-    const shown = noticeParts(departed, roster.importedAt).lines.length;
-    await departure.saveNoticeIds(guildId, roster._id, departed.slice(0, shown).map((d) => d.discordId), { more: departed.length - shown, at, joined, warId: war ? war._id : null });
-    logEvent('roster', 'depart_notice', { guild: guildId, rosterId, count, joined: joined.length, posted: true });
+    const shown = noticeParts(gone, roster.importedAt, maybe).lines.length;
+    await departure.saveNoticeIds(guildId, roster._id, gone.slice(0, shown).map((d) => d.discordId), { more: gone.length - shown, at, joined, warId: war ? war._id : null, merge: maybe.slice(0, MAX_MERGE) }); // like the lines: only the pairs really shown
+    logEvent('roster', 'depart_notice', { guild: guildId, rosterId, count, joined: joined.length, maybe: maybe.length, posted: true });
     return { posted: true, count };
   } catch (err) {
     // after the claim a failed post is not retried (no repeated notices); the 🎮 view still shows the same list

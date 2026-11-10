@@ -65,6 +65,48 @@ function findDeparted(linkedMembers, roster, guildMemberIds, { importedAt = null
   return out.sort((a, b) => String(a.displayName || a.gameName).localeCompare(String(b.displayName || b.gameName), 'vi') || (a.discordId < b.discordId ? -1 : 1));
 }
 
+const MERGE_MIN = 0.8; // how alike a "departed" name and an unclaimed roster name must be to say "probably the same person"
+
+// People of `departed` whose name is very close to a roster character nobody is linked to: most likely the same person under the
+// name the game really shows ("Bạch Phàm" typed at the gate, "Bạch Phàm TD" in the roster), or who typed their in-game ID as a name.
+// Pure. roster: the member array (or import doc) with { name, gameUid? }; linked: loadLinked() (the names somebody holds).
+// One character per person and one person per character, the closest pairs first. -> Map(discordId -> { from, name })
+function mergeHints(departed, roster, linked) {
+  const members = Array.isArray(roster) ? roster : (roster && roster.members) || [];
+  const held = new Set((linked || []).map((l) => nameKey(String(l.gameName || ''))).filter(Boolean));
+  const free = members.filter((g) => g && g.name && nameKey(String(g.name)) && !held.has(nameKey(String(g.name))));
+  const folded = (name) => gameRoster.fold(cutStem(String(name)));
+  const pairs = [];
+  for (const d of departed || []) {
+    const typed = String(d.gameName || '').trim();
+    for (const g of free) {
+      const sameId = /^\d{5,20}$/.test(typed) && String(g.gameUid || '') === typed;
+      const score = sameId ? 2 : gameRoster.similarity(folded(typed), folded(g.name));
+      if (score >= MERGE_MIN) pairs.push({ d, g, score });
+    }
+  }
+  pairs.sort((a, b) => b.score - a.score);
+  const hints = new Map();
+  const taken = new Set();
+  for (const { d, g } of pairs) {
+    if (hints.has(d.discordId) || taken.has(g.name)) continue;
+    hints.set(d.discordId, { from: d.gameName, name: g.name });
+    taken.add(g.name);
+  }
+  return hints;
+}
+
+// The in-game ID on the character each of these people is linked to now -> Map(discordId -> ID). People without one are left out.
+async function linkedUids(guildId, discordIds) {
+  if (!discordIds || !discordIds.length) return new Map();
+  const rows = await db.q(
+    `select m.discord_id, g.game_uid from discord_members m join character_links l on l.member_id = m.id join game_characters g on g.id = l.character_id
+     where m.guild_id = $1 and m.discord_id = any($2) and g.game_uid is not null`,
+    [guildId, discordIds]
+  );
+  return new Map(rows.map((r) => [r.discord_id, r.game_uid]));
+}
+
 // Everybody of the guild with a game name (any source) -> [{ discordId, gameName, source, displayName, gameNameAt }].
 async function loadLinked(guildId) {
   const rows = await memberStore.listMembers(guildId, `gc.name is not null and gc.name <> ''`);
@@ -104,7 +146,7 @@ async function claimImport(guildId, rosterId, importedAt, idKey, atKey, extra = 
 // (or the upload and the tick) never post twice. With `importedAt` the claim only moves forward: an older import can never be
 // claimed after a newer one (departNoticeImportedAt is null or older than it).
 function claimNotice(guildId, rosterId, importedAt = null) {
-  return claimImport(guildId, rosterId, importedAt, 'departNoticeRosterId', 'departNoticeImportedAt', { departNoticeIds: [], departNoticeMore: 0 });
+  return claimImport(guildId, rosterId, importedAt, 'departNoticeRosterId', 'departNoticeImportedAt', { departNoticeIds: [], departNoticeMore: 0, departNoticeMerge: [] });
 }
 
 // Marks a game import as handled by the off notice. true only for the one caller that moved offNoticeRosterId to it; the claim only moves
@@ -118,18 +160,26 @@ const MAX_NOTICE_IDS = 60;
 // The people the posted notice really listed (the lines shown, not the "… và K người nữa"), for the unlink button. Only written
 // while the import is still the claimed one. `more` = how many were left out of the lines.
 // `joined` / `warId`: the people listed as still registered for that war (the 🗑️ Gỡ báo danh button acts on them only).
-async function saveNoticeIds(guildId, rosterId, ids, { more = 0, at = new Date(), joined = [], warId = null } = {}) {
-  const patch = { departNoticeIds: [...ids].slice(0, MAX_NOTICE_IDS), departNoticeMore: more, departNoticeAt: at, departNoticeJoined: [...joined].slice(0, 200), departNoticeWarId: warId ? String(warId) : null };
+// `merge`: [{ id, from, name }] the "probably just another name" pairs the notice listed (the 🔀 Ghép tên mới button acts on them only).
+async function saveNoticeIds(guildId, rosterId, ids, { more = 0, at = new Date(), joined = [], warId = null, merge = [] } = {}) {
+  const patch = {
+    departNoticeIds: [...ids].slice(0, MAX_NOTICE_IDS),
+    departNoticeMore: more,
+    departNoticeAt: at,
+    departNoticeJoined: [...joined].slice(0, 200),
+    departNoticeWarId: warId ? String(warId) : null,
+    departNoticeMerge: [...merge].slice(0, MAX_NOTICE_IDS),
+  };
   const rows = await db.q(`update guilds set settings = settings || $3::jsonb where id = $1 and settings->>'departNoticeRosterId' = $2 returning id`, [guildId, String(rosterId), JSON.stringify(patch)]);
   return { matchedCount: rows.length, modifiedCount: rows.length };
 }
 
-// -> { rosterId, ids, more, at, joined, warId } of the last posted notice, or null. Read from the DB (not the config cache).
+// -> { rosterId, ids, more, at, joined, warId, merge } of the last posted notice, or null. Read from the DB (not the config cache).
 async function getNotice(guildId) {
   const row = await db.one('select settings from guilds where id = $1', [guildId]);
   const c = row && row.settings;
   if (!c || !c.departNoticeRosterId) return null;
-  return { rosterId: String(c.departNoticeRosterId), ids: c.departNoticeIds || [], more: c.departNoticeMore || 0, at: c.departNoticeAt ? new Date(c.departNoticeAt) : null, joined: c.departNoticeJoined || [], warId: c.departNoticeWarId || null };
+  return { rosterId: String(c.departNoticeRosterId), ids: c.departNoticeIds || [], more: c.departNoticeMore || 0, at: c.departNoticeAt ? new Date(c.departNoticeAt) : null, joined: c.departNoticeJoined || [], warId: c.departNoticeWarId || null, merge: c.departNoticeMerge || [] };
 }
 
 // Guilds that have somewhere to post the notice.
@@ -137,4 +187,4 @@ async function listNoticeConfigs() {
   return (await db.q(`select id, settings, created_at, updated_at from guilds where settings->>'adminChannelId' is not null`)).map(rowToConfig);
 }
 
-module.exports = { findDeparted, loadLinked, previousMembers, claimNotice, claimOffNotice, saveNoticeIds, getNotice, listNoticeConfigs, MAX_NOTICE_IDS };
+module.exports = { findDeparted, mergeHints, linkedUids, loadLinked, previousMembers, claimNotice, claimOffNotice, saveNoticeIds, getNotice, listNoticeConfigs, MAX_NOTICE_IDS };

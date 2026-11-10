@@ -21,11 +21,23 @@ const safeName = (s) => escapeMarkdown(truncate(s, NAME_MAX)).replace(/<(?=[@#])
 
 const lineOf = (p) => `• <@${p.discordId}> — tên game **${safeName(p.gameName)}** (liên kết: ${SOURCE_TEXT[p.source] || SOURCE_TEXT.admin})`;
 
-// departed: [{ discordId, gameName, source }]; importedAt: when the roster was imported.
+const MAX_MERGE = 15;
+const MERGE_HELP = '-# Bấm 🔀 Ghép tên mới nếu đúng là cùng người: liên kết Discord (và ID game) chuyển sang tên trong danh sách. Không thì ghép tay ở 🎮 Thành viên game.';
+
+// maybe: [{ id, from, name }] people whose linked name is gone but a roster name nobody holds is very close to it.
+// -> the text of that section ('' without anybody).
+function mergeText(maybe) {
+  if (!maybe || !maybe.length) return '';
+  const lines = maybe.slice(0, MAX_MERGE).map((p) => `• <@${p.id}> — **${safeName(p.from)}** → **${safeName(p.name)}**`);
+  if (maybe.length > MAX_MERGE) lines.push(`… và ${maybe.length - MAX_MERGE} người nữa`);
+  return [`🔀 **Có thể chỉ khác tên** (${maybe.length}) — danh sách game có tên gần giống, chưa ai nhận:`, ...lines, MERGE_HELP].join('\n');
+}
+
+// departed: [{ discordId, gameName, source }]; importedAt: when the roster was imported; maybe: see mergeText (their section shares the budget).
 // -> { subtitle, lines, more }: `lines` = what fits (at most MAX_LINES and the text budget), `more` = how many are left out.
-function noticeParts(departed, importedAt) {
-  const subtitle = `Theo danh sách game cập nhật ${discordTs(new Date(importedAt), 'R')} (${departed.length} người).`;
-  let used = TITLE.length + subtitle.length + NOTE.length + 80;
+function noticeParts(departed, importedAt, maybe = []) {
+  const subtitle = `Theo danh sách game cập nhật ${discordTs(new Date(importedAt), 'R')} (${departed.length + maybe.length} người).`;
+  let used = TITLE.length + subtitle.length + NOTE.length + 80 + mergeText(maybe).length;
   const lines = [];
   for (const p of departed) {
     const line = lineOf(p);
@@ -39,15 +51,20 @@ function noticeParts(departed, importedAt) {
 const button = (id, label, style = ButtonStyle.Secondary) => new ButtonBuilder().setCustomId(id).setLabel(label).setStyle(style);
 
 // joined: Discord ids of `departed` who still say "join" for the current war (`warTitle`): listed apart, with a 🗑️ Gỡ báo danh button.
-function buildDepartNotice({ rosterId, importedAt, departed, joined = [], warTitle = '' }) {
-  const { subtitle, lines, more } = noticeParts(departed, importedAt);
+// maybe: the people who probably only have another name (see mergeText): listed apart with a 🔀 Ghép tên mới button, and never among `departed`.
+function buildDepartNotice({ rosterId, importedAt, departed, joined = [], warTitle = '', maybe = [] }) {
+  const { subtitle, lines, more } = noticeParts(departed, importedAt, maybe);
   const list = more > 0 ? [...lines, `… và ${more} người nữa`] : lines;
-  const container = new ContainerBuilder()
-    .setAccentColor(ORANGE)
-    .addTextDisplayComponents(textDisplay(`${TITLE}\n${subtitle}`))
-    .addSeparatorComponents(separator())
-    .addTextDisplayComponents(textDisplay(list.join('\n')));
-  const row = new ActionRowBuilder().addComponents(button(`adm:depok:${rosterId}`, '✅ Đã xử lý', ButtonStyle.Success), button(`adm:depunlink:${rosterId}`, '🔗 Gỡ liên kết những người này'));
+  const container = new ContainerBuilder().setAccentColor(ORANGE).addTextDisplayComponents(textDisplay(`${TITLE}\n${subtitle}`));
+  const row = new ActionRowBuilder().addComponents(button(`adm:depok:${rosterId}`, '✅ Đã xử lý', ButtonStyle.Success));
+  if (list.length) {
+    container.addSeparatorComponents(separator()).addTextDisplayComponents(textDisplay(list.join('\n')));
+    row.addComponents(button(`adm:depunlink:${rosterId}`, '🔗 Gỡ liên kết những người này'));
+  }
+  if (maybe.length) {
+    container.addSeparatorComponents(separator()).addTextDisplayComponents(textDisplay(mergeText(maybe)));
+    row.addComponents(button(`adm:depmerge:${rosterId}`, '🔀 Ghép tên mới', ButtonStyle.Primary));
+  }
   if (joined.length) {
     const shown = joined.slice(0, MAX_LINES).map((id) => `<@${id}>`).join(', ');
     const rest = joined.length > MAX_LINES ? ` … +${joined.length - MAX_LINES}` : '';
@@ -81,4 +98,4 @@ function messageTexts(message) {
   return out;
 }
 
-module.exports = { buildDepartNotice, buildDepartDone, messageTexts, noticeParts, MAX_LINES, TITLE };
+module.exports = { buildDepartNotice, buildDepartDone, messageTexts, noticeParts, MAX_LINES, MAX_MERGE, TITLE };

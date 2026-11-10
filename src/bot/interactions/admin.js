@@ -470,7 +470,7 @@ async function onSheetNow(interaction, config) {
 // adm:create | adm:createModal | adm:lock | adm:settings | adm:settingsModal
 // | adm:unreg[:r] | adm:unregping:<eid>[:g] | adm:unregok:<eid>[:g] | adm:move:<eid>
 // | adm:sheet | adm:sheetedit | adm:sheetnow | adm:game | adm:gamexlsx | adm:gameup | adm:gameupModal | adm:gameadd | adm:gameaddModal | adm:gameuid | adm:gameuidModal | adm:gmap[:r|:g] | adm:gmapp:<page> | adm:gmapm:<index>:<page>:<ver> | adm:gmaps:<index>:<ver> | adm:gmapsug:<ver> | adm:gmapg:<page>:<ver> | adm:gmapu:<index>:<ver> | adm:gmapdel (see ./gameMap)
-// | adm:depok:<rosterId> | adm:depunlink:<rosterId> (the "left the game, still on Discord" notice, see ./depart)
+// | adm:depok:<rosterId> | adm:depunlink:<rosterId> | adm:depreg:<rosterId> | adm:depmerge:<rosterId> (the "left the game, still on Discord" notice, see ./depart)
 // adm:offok:<rosterId> - ✅ Đã xử lý on the "off quá N ngày" card (admin-gated in handle): the card turns green with who handled it.
 async function onOffDone(interaction, rosterId) {
   const texts = messageTexts(interaction.message);
@@ -564,6 +564,8 @@ async function handle(interaction, parts) {
       return depart.onUnlink(interaction, config, parts[2]);
     case 'depreg':
       return depart.onUnreg(interaction, config, parts[2]);
+    case 'depmerge':
+      return depart.onMerge(interaction, config, parts[2]);
     case 'gren':
     case 'grenpair':
     case 'grenold':

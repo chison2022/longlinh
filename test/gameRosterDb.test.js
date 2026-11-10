@@ -131,7 +131,7 @@ describe('per-import notice claims (guild settings)', () => {
     assert.equal(await departure.claimNotice(G, 6, T3), true);
     await departure.saveNoticeIds(G, 6, [sid(1), sid(2)], { more: 3, at: T3 });
     await departure.saveNoticeIds(G, 5, [sid(9)]); // not the claimed import: ignored
-    assert.deepEqual(await departure.getNotice(G), { rosterId: '6', ids: [sid(1), sid(2)], more: 3, at: T3, joined: [], warId: null });
+    assert.deepEqual(await departure.getNotice(G), { rosterId: '6', ids: [sid(1), sid(2)], more: 3, at: T3, joined: [], warId: null, merge: [] });
     assert.deepEqual((await departure.listNoticeConfigs()).map((c) => c.guildId), [G]);
   });
   it('claimOffNotice is a separate claim with the same rules', async () => {
