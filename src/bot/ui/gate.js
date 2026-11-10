@@ -1,14 +1,13 @@
 // New-member gate views (pure: no Discord client, no DB). customIds (prefix gate, stateless):
 //  public panel : gate:member
-//  member steps : gate:pick:<page>:<ver> (select) | gate:p:<page>:<ver> (◀ ▶) | gate:free (modal gate:freeModal) | gate:cls:<token> (class select)
+//  member steps : gate:free (opens the name form gate:freeModal: the name is always typed, there is no list to pick from) | gate:cls:<token> (class select)
 //                 | gate:send:<token>:<classIndex> (opens the ID modal gate:sendModal:<token>:<classIndex>, the real send) | gate:back
 //  approval card: gate:ok:<id> | gate:no:<id> (modal gate:noModal:<id>)      (admin-gated)
 //  guest (only while config.guestRoleId is set; self-serve, nobody approves): gate:gst (panel button) -> confirm step: gate:gyes | gate:gback
 //  auto-approved card (a roster name): gate:rv:<id> (modal gate:rvModal:<id>) = take the membership back      (admin-gated)
-// <token> = the chosen character: `r<position in the roster>-<roster version>` or `f-<typed name>`.
+// <token> = the character: `r<position in the roster>-<roster version>` (the typed name IS a roster character) or `f-<typed name>`.
 const { ActionRowBuilder, ButtonBuilder, ButtonStyle, ContainerBuilder, StringSelectMenuBuilder, ModalBuilder, LabelBuilder, TextInputBuilder, TextInputStyle, escapeMarkdown } = require('discord.js');
 const { truncate, textDisplay, separator, v2Payload } = require('./common');
-const { rosterSelect, LABELS: GN } = require('./gameName');
 const { styleOf, optionEmoji } = require('../classStyle');
 const { plainClass } = require('../../services/lineupStyle');
 const { discordTs } = require('../../utils/time');
@@ -28,7 +27,7 @@ const LABELS = {
   ok: '✅ Duyệt',
   no: '❌ Từ chối',
   revoke: '↩️ Thu hồi',
-  free: GN.free,
+  free: '⌨️ Nhập tên nhân vật',
   guest: '🤝 Khách',
   guestYes: '✅ Vào làm khách',
   guestBack: '↩ Quay lại',
@@ -51,7 +50,7 @@ function buildGatePanel({ guildName, autoApprove = true, guest = false }) {
     .setAccentColor(BLUE)
     .addTextDisplayComponents(textDisplay(`### 👋 Chào mừng đến ${truncate(guildName, 100)}!\nBấm nút bên dưới để xin vào bang.`))
     .addActionRowComponents(new ActionRowBuilder().addComponents(...buttons))
-    .addTextDisplayComponents(textDisplay(autoApprove ? '-# Chọn đúng nhân vật có trong danh sách game là vào bang ngay; tên không có trong danh sách thì chờ quản lý duyệt.' : '-# Thành viên bang cần quản lý duyệt trước khi thấy các kênh của bang.'));
+    .addTextDisplayComponents(textDisplay(autoApprove ? '-# Nhập đúng tên nhân vật của bạn: tên có trong danh sách game là vào bang ngay; tên không có trong danh sách thì chờ quản lý duyệt.' : '-# Thành viên bang cần quản lý duyệt trước khi thấy các kênh của bang.'));
   if (guest) container.addTextDisplayComponents(textDisplay('-# Không chơi trong bang (bạn bè, khách)? Bấm Khách để vào server ngay, không cần duyệt.'));
   return v2Payload([container]);
 }
@@ -68,24 +67,11 @@ function parseToken(token) {
   return m ? { free: false, index: Number(m[1]), ver: m[2] } : null;
 }
 
-// Step 1: pick the character. ranked/hasRoster as in the gn picker (same ranking, 25 per page).
-function buildGatePicker({ ranked = [], page = 0, ver = '0', hasRoster = true, note = null } = {}) {
-  const lines = ['**🚪 Xin vào bang (1/3): chọn nhân vật trong game**'];
+// Step 1: type the character's name. There is no list to pick from: people used to take somebody else's name from it.
+function buildNameStep({ note = null } = {}) {
+  const lines = ['**🚪 Xin vào bang (1/3): nhập tên nhân vật trong game**', 'Bấm nút bên dưới rồi gõ **đúng tên nhân vật của bạn** như trong game (mở game xem lại nếu không chắc).'];
   if (note) lines.push(note);
-  const rows = [];
-  let nav = [];
-  if (!hasRoster) {
-    lines.push('Quản lý chưa nhập danh sách thành viên game — bạn tự nhập tên nhân vật.');
-  } else if (!ranked.length) {
-    lines.push('Không còn tên nào trong danh sách game để chọn (đã có người liên kết) — bấm “Tên tôi không có trong danh sách” để nhập tay.');
-  } else {
-    const sel = rosterSelect(ranked, page, ver, 'gate');
-    lines.push(sel.line);
-    rows.push(sel.row);
-    nav = sel.nav;
-  }
-  rows.push(new ActionRowBuilder().addComponents(...nav, button('gate:free', LABELS.free)));
-  return ephemeral(lines.join('\n'), rows);
+  return ephemeral(lines.join('\n'), [new ActionRowBuilder().addComponents(button('gate:free', LABELS.free, ButtonStyle.Primary))]);
 }
 
 function freeNameModal() {
@@ -95,7 +81,7 @@ function freeNameModal() {
     .addLabelComponents(
       new LabelBuilder()
         .setLabel('Tên nhân vật trong game')
-        .setDescription('Gõ đúng như trong game (chữ Latin / tiếng Việt, số). Quản lý sẽ kiểm tra lại.')
+        .setDescription('Gõ đúng như trong game (chữ Latin / tiếng Việt, số), không gõ tên người khác.')
         .setTextInputComponent(new TextInputBuilder().setCustomId('name').setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(32))
     );
 }
@@ -284,7 +270,7 @@ module.exports = {
   parseToken,
   ephemeral,
   buildGatePanel,
-  buildGatePicker,
+  buildNameStep,
   freeNameModal,
   buildClassStep,
   buildSummary,

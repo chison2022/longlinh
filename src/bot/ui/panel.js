@@ -209,7 +209,7 @@ function buildGateSetupView(config, note, ctx = {}) {
   if (config.guestRoleId) guest.setDefaultRoles(config.guestRoleId);
   const lines = [
     '**🚪 Cổng vào người mới**',
-    'Người mới chỉ thấy kênh cổng vào (bạn tự chỉnh quyền kênh, bot không đụng). Bấm ⚔️ Thành viên bang → chọn nhân vật: tên có trong danh sách game thì bot tự duyệt (cấp role thành viên + role phái, quản lý nhận thẻ có nút ↩️ Thu hồi); tên tự gõ thì chờ quản lý duyệt.',
+    'Người mới chỉ thấy kênh cổng vào (bạn tự chỉnh quyền kênh, bot không đụng). Bấm ⚔️ Thành viên bang → nhập tên nhân vật: tên có trong danh sách game thì bot tự duyệt (cấp role thành viên + role phái, quản lý nhận thẻ có nút ↩️ Thu hồi); tên tự gõ thì chờ quản lý duyệt.',
     config.guestRoleId ? `🤝 Nút Khách: **BẬT** (ai bấm cũng tự nhận role <@&${config.guestRoleId}>, không cần duyệt). Bấm 📌 để bảng cổng vào hiện nút.` : '🤝 Nút Khách: **TẮT** (chọn role khách bên dưới để bật)',
     config.gateAutoApprove !== false ? '🤖 Tự duyệt: **BẬT** (tên có trong danh sách game vào ngay)' : '✋ Tự duyệt: **TẮT** (mọi yêu cầu chờ quản lý duyệt)',
     isOn(config, 'gate') ? '🟢 Cổng đang **BẬT**' : '⚪ Cổng đang **TẮT** (bảng vẫn dùng được khi đã đăng, nhưng nút báo cổng đang tắt; bật lại ở 🧩 Tính năng)',

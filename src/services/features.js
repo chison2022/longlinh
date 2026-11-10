@@ -22,7 +22,7 @@ const FEATURES = [
   { key: 'tuyenKhien', emoji: '🛡', label: 'Tuyến Khiên', desc: 'Nút chọn nhóm Tuyến Khiên trên thẻ bang chiến', setup: null },
   { key: 'events', emoji: '🎉', label: 'Sự kiện', desc: 'Sự kiện bang ngoài bang chiến (thẻ, nhắc, chốt)', setup: '🎉 Sự kiện: bảng quản lý đăng ở kênh admin (hoặc chọn kênh riêng ở ⚙️ Nâng cao → 🎉 Sự kiện).' },
   { key: 'mailbox', emoji: '📮', label: 'Hòm thư', desc: 'Thành viên gửi góp ý, có thể ẩn danh', setup: '📮 Hòm thư: thư hiện ở kênh admin; thư ẩn danh cần khoá (chủ bot chạy npm run mail:keygen).' },
-  { key: 'gate', emoji: '🚪', label: 'Cổng vào', desc: 'Người mới chọn tên game: có trong danh sách thì bot tự duyệt và cấp role', setup: '🚪 Cổng vào cần kênh welcome và role Thành viên: vào ⚙️ Nâng cao → 🚪 Cổng vào.' },
+  { key: 'gate', emoji: '🚪', label: 'Cổng vào', desc: 'Người mới nhập tên game: có trong danh sách thì bot tự duyệt và cấp role', setup: '🚪 Cổng vào cần kênh welcome và role Thành viên: vào ⚙️ Nâng cao → 🚪 Cổng vào.' },
   { key: 'voiceHang', emoji: '🎧', label: 'Treo voice', desc: 'Bot ngồi sẵn trong 1 kênh voice (tắt mic, tắt loa)', setup: '🎧 Treo voice: chọn kênh ở ⚙️ Nâng cao → 🎧 Treo voice.' },
   { key: 'offNotice', emoji: '⏰', label: 'Báo off lâu', desc: 'Báo quản lý ai off game quá N ngày', setup: null },
   { key: 'departNotice', emoji: '👋', label: 'Báo rời game', desc: 'Báo quản lý ai đã rời game mà còn trong Discord', setup: null },

@@ -50,7 +50,7 @@ Bot lo phần việc lặp lại hằng tuần của ban quản lý: mở đăng
 | 🛡 **Tuyến Khiên** | Thành viên khai báo nhóm Nhất Tuyến Khiên (ai đi cùng ai) để lead xếp chung PT. |
 | 🎉 **Sự kiện** | Sự kiện ngoài bang chiến: tạo bằng form, xem trước rồi mới đăng, giới hạn số người (tối thiểu / tối đa), ✅ / ❓ / ❌, tự nhắc, tự chốt, xuất file Word danh sách. |
 | 📮 **Hòm thư** | Thành viên gửi góp ý, khiếu nại, báo lỗi; có thể **ẩn danh**. Thư ẩn danh được mã hoá: quản lý không thấy người gửi; chỉ chủ bot giữ khoá riêng (không bao giờ nằm trên máy chạy bot) mới tra được khi thư vi phạm nghiêm trọng. Người gửi xem trả lời bằng mã thư. |
-| 🚪 **Cổng vào** | Người mới vào server chọn nhân vật trong danh sách game: có tên thì bot tự duyệt và cấp role thành viên + role phái (quản lý nhận thẻ có nút ↩️ Thu hồi), tên tự gõ thì chờ quản lý duyệt. |
+| 🚪 **Cổng vào** | Người mới vào server tự nhập tên nhân vật (không có danh sách để chọn): tên có trong danh sách game thì bot tự duyệt và cấp role thành viên + role phái (quản lý nhận thẻ có nút ↩️ Thu hồi), tên tự gõ thì chờ quản lý duyệt. |
 | 🎧 **Treo voice** | Bot ngồi sẵn trong một kênh voice cố định (tắt mic, tắt loa) và tự vào lại khi bị ngắt. |
 | ⏰ **Báo off lâu** | Sau mỗi lần cập nhật danh sách game, báo quản lý ai đã off quá N ngày. |
 | 👋 **Báo rời game** | Báo quản lý ai đã rời bang trong game nhưng còn trong Discord, ai trong số đó **vẫn đang báo danh** bang chiến (kèm nút 🗑️ Gỡ báo danh) và nút gỡ liên kết tên. Bot không bao giờ tự kick. |

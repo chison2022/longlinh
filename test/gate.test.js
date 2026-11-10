@@ -303,8 +303,8 @@ after(() => {
 async function sendRequest({ w = world({ members: [[ADMIN, 'Quản Lý', []]] }), user = USER, name = 'Beta Boss', pick = '1', classIndex = 0 } = {}) {
   const a = interactionOf(w, { user, name });
   await gate.handle(a.i, ['gate', 'member']);
-  const p = interactionOf(w, { user, name, values: [pick] });
-  await gate.handle(p.i, ['gate', 'pick', '0', VER]);
+  const p = interactionOf(w, { user, name, fields: { name: roster.members[Number(pick)].name } });
+  await gate.handle(p.i, ['gate', 'freeModal']);
   const s = interactionOf(w, { user, name });
   await gate.handle(s.i, ['gate', 'sendModal', `r${pick}-${VER}`, String(classIndex)]);
   const cardEntry = w.rec.sent.filter((x) => x[0] === 'c-admin').pop();
@@ -515,7 +515,7 @@ describe('the gate panel', () => {
     const payload = ui.buildGatePanel({ guildName: 'Bang Thử Nghiệm' });
     const v2 = assertV2Message(payload);
     assert.match(v2.text, /### 👋 Chào mừng đến Bang Thử Nghiệm!\nBấm nút bên dưới để xin vào bang\./);
-    assert.match(v2.text, /-# Chọn đúng nhân vật có trong danh sách game là vào bang ngay/, "auto-approval on by default");
+    assert.match(v2.text, /-# Nhập đúng tên nhân vật của bạn: tên có trong danh sách game là vào bang ngay/, "auto-approval on by default");
     assert.match(textOf(ui.buildGatePanel({ guildName: "X", autoApprove: false })), /-# Thành viên bang cần quản lý duyệt trước khi thấy các kênh của bang./);
     assert.ok(!/Khách|ghé chơi/.test(v2.text));
     assert.deepEqual(v2.buttons.map((b) => [b.custom_id, b.label]), [['gate:member', '⚔️ Thành viên bang Bang Thử Nghiệm']]);
@@ -608,52 +608,52 @@ describe('gate:guest / gate:swguest / gate:tg: the guest path is gone', () => {
 // ---------- member flow ----------
 
 describe('gate:member', () => {
-  it('opens an ephemeral picker built on the gn ranking: the closest name first, ◀ ▶ pages of 25, "Tên tôi không có trong danh sách"', async () => {
+  it('opens an ephemeral step with ONE button that opens the name form: no list of names to pick from, whatever the roster', async () => {
     const w = world();
     const { i, log } = interactionOf(w);
     await gate.handle(i, ['gate', 'member']);
     assert.equal(log[0][1].flags, 64);
     const v = last(log);
     assertMessage(v);
-    assert.deepEqual(optionsOf(v).map((o) => o.label)[0], 'Beta Boss');
-    assert.equal(jsonRows(v)[0].components[0].custom_id, `gate:pick:0:${VER}`);
-    assert.deepEqual(jsonRows(v).at(-1).components.map((c) => c.custom_id), ['gate:free']);
-    roster.members = Array.from({ length: 60 }, (_, n) => g(`Nhân vật ${String(n).padStart(2, '0')}`));
-    const big = interactionOf(w);
-    await gate.handle(big.i, ['gate', 'member']);
-    const bigView = last(big.log);
-    assert.equal(optionsOf(bigView).length, 25);
-    assert.deepEqual(jsonRows(bigView).at(-1).components.map((c) => [c.custom_id, !!c.disabled]), [[`gate:p:0:${VER}`, true], [`gate:p:1:${VER}`, false], ['gate:free', false]]);
-    const p2 = interactionOf(w);
-    await gate.handle(p2.i, ['gate', 'p', '2', VER]);
-    assert.equal(optionsOf(last(p2.log)).length, 10);
+    assert.match(v.content, /\(1\/3\): nhập tên nhân vật trong game/);
+    assert.deepEqual(jsonRows(v).map((r) => r.components.map((c) => [c.custom_id, c.label])), [[['gate:free', '⌨️ Nhập tên nhân vật']]]);
+    assert.ok(!JSON.stringify(jsonRows(v)).includes('Beta Boss'), 'no roster name is shown');
+    roster = null;
+    const none = interactionOf(w);
+    await gate.handle(none.i, ['gate', 'member']);
+    assert.deepEqual(jsonRows(last(none.log)).map((r) => r.components.map((c) => c.custom_id)), [['gate:free']]);
   });
-  it('names somebody else holds are not offered: admin pair, self link, and an automatic match to another member', async () => {
-    mappings = makeMappings([[sid(7), 'GAMMA', 'self'], [sid(8), 'Delta', 'admin']]);
-    const w = world({ members: [[sid(9), 'Alpha', []]] }); // Discord name Alpha = matched to him automatically
-    const { i, log } = interactionOf(w);
-    await gate.handle(i, ['gate', 'member']);
-    assert.deepEqual(optionsOf(last(log)).map((o) => o.label), ['Beta Boss']);
+  it('the list of an older message (gate:p / gate:pick) answers with the name step: nothing can be picked any more', async () => {
+    const w = world();
+    for (const parts of [['gate', 'pick', '0', VER], ['gate', 'p', '1', VER]]) {
+      const { i, log } = interactionOf(w, { values: ['1'] });
+      await gate.handle(i, parts);
+      const v = last(log);
+      assert.match(v.content, /Danh sách chọn tên đã bỏ/);
+      assert.deepEqual(jsonRows(v).map((r) => r.components.map((c) => c.custom_id)), [['gate:free']]);
+    }
+    assert.equal(reqs.length, 0);
   });
-  it('a taken name picked anyway (stale menu) is refused with the gn wording and no class step follows', async () => {
+  it('a typed name somebody holds is refused with the gn wording and no class step follows', async () => {
     const w = world();
     mappings = makeMappings([[sid(8), 'Delta', 'admin']]);
-    const { i, log } = interactionOf(w, { values: ['3'] }); // Delta
-    await gate.handle(i, ['gate', 'pick', '0', VER]);
+    const { i, log } = interactionOf(w, { fields: { name: 'Delta' } });
+    await gate.handle(i, ['gate', 'freeModal']);
     const v = last(log);
     assert.match(v.content, new RegExp(gameRoster.TAKEN_ADMIN_MSG));
-    assert.equal(jsonRows(v)[0].components[0].custom_id, `gate:pick:0:${VER}`, 'back on the picker');
+    assert.equal(jsonRows(v)[0].components[0].custom_id, 'gate:free', 'back on the name step');
     mappings = makeMappings([[sid(8), 'Delta', 'self']]);
-    const self = interactionOf(w, { values: ['3'] });
-    await gate.handle(self.i, ['gate', 'pick', '0', VER]);
+    const self = interactionOf(w, { fields: { name: 'delta' } });
+    await gate.handle(self.i, ['gate', 'freeModal']);
     assert.match(last(self.log).content, new RegExp(gameRoster.TAKEN_SELF_MSG));
     assert.deepEqual(ev('gate.name_refused').map((e) => e.reason), ['admin', 'self']);
   });
-  it('a roster that changed since the menu was drawn: asks to pick again', async () => {
+  it('a roster that changed since the summary was drawn: asks to type the name again', async () => {
     const w = world();
     const { i, log } = interactionOf(w, { values: ['1'] });
-    await gate.handle(i, ['gate', 'pick', '0', 'deadbeef']);
-    assert.match(last(log).content, /Danh sách game vừa được cập nhật/);
+    await gate.handle(i, ['gate', 'cls', 'r1-deadbeef']);
+    assert.match(last(log).content, /Danh sách game vừa được cập nhật — nhập lại tên nhân vật/);
+    assert.equal(jsonRows(last(log))[0].components[0].custom_id, 'gate:free');
   });
   it('picking a free name goes through the same checks: a name held by somebody (any spelling) is refused, a typed roster name is that character, a new one is "tự nhập"', async () => {
     const w = world();
@@ -677,17 +677,17 @@ describe('gate:member', () => {
     assertModal(open.log[0][1]);
     assert.equal(open.log[0][1].toJSON().custom_id, 'gate:freeModal');
   });
-  it('a roster character whose class is known skips step 2: the summary shows that class with 🎭 Đổi phái; an unknown class still asks', async () => {
+  it('a typed roster character whose class is known skips step 2: the summary shows that class with 🎭 Đổi phái; an unknown class still asks', async () => {
     const w = world();
-    const pick = interactionOf(w, { values: ['1'] }); // Beta Boss, Thiết Y in the roster
-    await gate.handle(pick.i, ['gate', 'pick', '0', VER]);
+    const pick = interactionOf(w, { fields: { name: 'beta boss' } }); // Beta Boss, Thiết Y in the roster
+    await gate.handle(pick.i, ['gate', 'freeModal']);
     const summary = last(pick.log);
     assertMessage(summary);
     assert.match(summary.content, /Thiết Y \(theo danh sách game/);
     assert.deepEqual(jsonRows(summary)[0].components.map((c) => c.custom_id), [`gate:send:r1-${VER}:0`, `gate:chc:r1-${VER}`, 'gate:back']);
     roster.members[2] = g('Gamma', { className: 'Phái Lạ' });
-    const unknown = interactionOf(w, { values: ['2'] });
-    await gate.handle(unknown.i, ['gate', 'pick', '0', VER]);
+    const unknown = interactionOf(w, { fields: { name: 'Gamma' } });
+    await gate.handle(unknown.i, ['gate', 'freeModal']);
     assert.equal(jsonRows(last(unknown.log))[0].components[0].custom_id, `gate:cls:r2-${VER}`, 'class not in config.classes -> step 2');
   });
   it('step 2 (via 🎭 Đổi phái) lists config.classes (with their emoji), step 3 summarises and offers 📨 Gửi yêu cầu', async () => {
@@ -789,7 +789,7 @@ describe('gate:member', () => {
     const w = world({ members: [[ADMIN, 'Quản Lý', []]] });
     const a = interactionOf(w);
     await gate.handle(a.i, ['gate', 'member']);
-    assert.match(last(a.log).content, /tự nhập tên/);
+    assert.match(last(a.log).content, /nhập tên nhân vật trong game/);
     const s = interactionOf(w);
     await gate.handle(s.i, ['gate', 'sendModal', 'f-Người Lạ', '0']);
     assert.equal(reqs[0].gameNameFree, true);

@@ -1,7 +1,7 @@
 // The new-member gate (customIds gate:*, views in ../ui/gate.js, rules in ../../services/gateService.js).
 //  Public panel: gate:member (+ gate:gst "🤝 Khách" while config.guestRoleId is set: a confirm step, then the guest role at once - self-serve,
-//  no request, no manager decision, no cooldown; managers only get an info line). The member path is three ephemeral steps (character, class, send) built on the SAME roster
-//  ranking / holder rules as the self-link picker (gn, see ./gameName availability); the request is then posted as a card in the admin
+//  no request, no manager decision, no cooldown; managers only get an info line). The member path is three ephemeral steps (character, class, send): the name is always TYPED (no list to pick from),
+//  a typed name that is in the roster is that character, with the holder rules of the self-link picker (gn, see ./gameName availability); the request is then posted as a card in the admin
 //  channel where a manager presses ✅ Duyệt / ❌ Từ chối (admin-gated). Nothing here edits channel permissions. There is no Chờ duyệt
 //  role: gate:guest / gate:swguest / gate:tg of old messages (the retired guest path) answer that they are gone.
 //  A role that cannot be changed never half-applies: the roles are checked BEFORE anything is saved, the status moves with one atomic
@@ -28,7 +28,8 @@ const { logEvent, ixCtx } = require('../../eventLog');
 
 const GATE_OFF = '🚪 Cổng vào đang tắt, hãy nhờ quản lý.';
 const ALREADY_MEMBER = '✅ Bạn đã là thành viên bang.';
-const ROSTER_CHANGED = 'Danh sách game vừa được cập nhật — chọn lại từ danh sách mới.';
+const ROSTER_CHANGED = 'Danh sách game vừa được cập nhật — nhập lại tên nhân vật.';
+const LIST_GONE = 'Danh sách chọn tên đã bỏ — hãy nhập tên nhân vật của bạn.';
 const LOADING = '⏳ Bot đang tải danh sách thành viên Discord, thử lại sau ít giây.';
 const GUEST_GONE_NOW = '🤝 Nút Khách đang tắt, hãy nhờ quản lý.';
 const GUEST_GONE = '🚶 Lối vào Khách đang tắt — muốn vào bang hãy bấm ⚔️ Thành viên bang ở kênh cổng vào.';
@@ -39,7 +40,6 @@ const STATUS_TEXT = { approved: 'đã được duyệt', rejected: 'đã bị t�
 
 const fromMessage = (interaction) => typeof interaction.isFromMessage === 'function' && interaction.isFromMessage();
 const holds = (member, roleId) => Boolean(roleId) && memberRoleIds(member).includes(roleId);
-const num = (v) => (Number.isInteger(Number(v)) && Number(v) >= 0 ? Number(v) : 0);
 
 // The clicking member as a GuildMember (roles.add exists): the interaction's own when cached, else fetched.
 async function memberOf(interaction) {
@@ -62,12 +62,8 @@ const roleFailed = (interaction, fields) => logEvent('gate', 'role_failed', { ..
 
 // ---------- member path ----------
 
-async function pickerView(interaction, { page = 0, note = null, roster } = {}) {
-  const doc = roster === undefined ? await gameRoster.latest(interaction.guildId) : roster;
-  const avail = await availability(interaction, doc, { keepMine: true });
-  const notes = [note, avail.complete ? null : LOADING].filter(Boolean).join('\n') || null;
-  return ui.buildGatePicker({ ranked: avail.ranked, page, ver: doc ? gameRoster.rosterVersion(doc) : '0', hasRoster: Boolean(doc), note: notes });
-}
+// Step 1: the name form's button, with what went wrong last time (`note`).
+const nameStep = (note = null) => ui.buildNameStep({ note });
 
 // The common opening of the member path: gate on, not a member yet, no pending request. -> a reply payload, or null to go on.
 async function entryBlock(interaction, config) {
@@ -159,7 +155,7 @@ async function onMember(interaction) {
   const config = await getConfigOrDefault(interaction.guildId);
   const block = await entryBlock(interaction, config);
   if (block) return interaction.editReply(block);
-  return interaction.editReply(await pickerView(interaction));
+  return interaction.editReply(nameStep());
 }
 
 // token -> { name, free, entry, token } | { stale: true } (the roster changed / the token is damaged)
@@ -212,36 +208,21 @@ async function afterName(interaction, config, choice) {
 async function onChangeClass(interaction, parts) {
   const roster = await gameRoster.latest(interaction.guildId);
   const choice = resolveChoice(parts.slice(2).join(':'), roster);
-  if (choice.stale) return interaction.editReply(await pickerView(interaction, { note: ROSTER_CHANGED, roster }));
+  if (choice.stale) return interaction.editReply(nameStep(ROSTER_CHANGED));
   const config = await getConfigOrDefault(interaction.guildId);
   return classStep(interaction, config, choice);
-}
-
-async function onPick(interaction, parts) {
-  const roster = await gameRoster.latest(interaction.guildId);
-  const index = Number(String((interaction.values || [])[0]));
-  if (!roster || gameRoster.rosterVersion(roster) !== parts[3] || !roster.members[index]) return interaction.editReply(await pickerView(interaction, { note: ROSTER_CHANGED, roster }));
-  const choice = resolveChoice(ui.rosterToken(index, parts[3]), roster);
-  const { avail, holder } = await holderCheck(interaction, roster, choice, { keepMine: true });
-  if (!avail.complete) return interaction.editReply(await pickerView(interaction, { page: num(parts[2]), note: LOADING, roster }));
-  if (holder) {
-    refused(interaction, holder, choice);
-    return interaction.editReply(await pickerView(interaction, { page: num(parts[2]), note: refuseNote(holder), roster }));
-  }
-  const config = await getConfigOrDefault(interaction.guildId);
-  return afterName(interaction, config, choice);
 }
 
 async function onFreeSubmit(interaction) {
   const roster = await gameRoster.latest(interaction.guildId);
   const cleaned = gameRoster.cleanFreeName(interaction.fields.getTextInputValue('name'));
-  if (cleaned.error) return interaction.editReply(await pickerView(interaction, { note: `⚠️ ${cleaned.error}`, roster }));
+  if (cleaned.error) return interaction.editReply(nameStep(`⚠️ ${cleaned.error}`));
   const choice = resolveChoice(ui.freeToken(cleaned.name), roster); // a typed name that IS in the roster is that character
   const { avail, holder } = await holderCheck(interaction, roster, choice, { keepMine: true });
-  if (!avail.complete) return interaction.editReply(await pickerView(interaction, { note: LOADING, roster }));
+  if (!avail.complete) return interaction.editReply(nameStep(LOADING));
   if (holder) {
     refused(interaction, holder, choice);
-    return interaction.editReply(await pickerView(interaction, { note: refuseNote(holder), roster }));
+    return interaction.editReply(nameStep(refuseNote(holder)));
   }
   const config = await getConfigOrDefault(interaction.guildId);
   return afterName(interaction, config, choice);
@@ -251,7 +232,7 @@ async function onClass(interaction, parts) {
   const token = parts.slice(2).join(':');
   const roster = await gameRoster.latest(interaction.guildId);
   const choice = resolveChoice(token, roster);
-  if (choice.stale) return interaction.editReply(await pickerView(interaction, { note: ROSTER_CHANGED, roster }));
+  if (choice.stale) return interaction.editReply(nameStep(ROSTER_CHANGED));
   const config = await getConfigOrDefault(interaction.guildId);
   const index = Number(String((interaction.values || [])[0]));
   const className = config.classes[index];
@@ -278,7 +259,7 @@ async function onSend(interaction, parts) {
   if (block) return interaction.editReply(block);
   const roster = await gameRoster.latest(interaction.guildId);
   const choice = resolveChoice(token, roster);
-  if (choice.stale) return interaction.editReply(await pickerView(interaction, { note: ROSTER_CHANGED, roster }));
+  if (choice.stale) return interaction.editReply(nameStep(ROSTER_CHANGED));
   const className = config.classes[classIndex];
   if (!className) return classStep(interaction, config, choice, '⚠️ Danh sách phái vừa đổi, chọn lại.');
   const adminChannelId = gateService.gateAdminChannelOf(config);
@@ -295,10 +276,10 @@ async function onSend(interaction, parts) {
   if (uidCheck.error) return retryUid(uidCheck.error);
 
   const { avail, holder } = await holderCheck(interaction, roster, choice, { keepMine: true });
-  if (!avail.complete) return interaction.editReply(await pickerView(interaction, { note: LOADING, roster }));
+  if (!avail.complete) return interaction.editReply(nameStep(LOADING));
   if (holder) {
     refused(interaction, holder, choice);
-    return interaction.editReply(await pickerView(interaction, { note: refuseNote(holder), roster }));
+    return interaction.editReply(nameStep(refuseNote(holder)));
   }
 
   const member = await memberOf(interaction);
@@ -748,16 +729,11 @@ async function handle(interaction, parts) {
       return interaction.editReply(ui.ephemeral('Đã quay lại. Bấm một nút ở bảng cổng vào để chọn lại.'));
     case 'back':
       await interaction.deferUpdate();
-      return interaction.editReply(await pickerView(interaction));
-    case 'p': {
-      await interaction.deferUpdate();
-      const roster = await gameRoster.latest(interaction.guildId);
-      if (!roster || gameRoster.rosterVersion(roster) !== parts[3]) return interaction.editReply(await pickerView(interaction, { note: ROSTER_CHANGED, roster }));
-      return interaction.editReply(await pickerView(interaction, { page: num(parts[2]), roster }));
-    }
+      return interaction.editReply(nameStep());
+    case 'p': // the list of an older message: there is no list any more
     case 'pick':
       await interaction.deferUpdate();
-      return onPick(interaction, parts);
+      return interaction.editReply(nameStep(LIST_GONE));
     case 'free':
       return interaction.showModal(ui.freeNameModal());
     case 'freeModal':
