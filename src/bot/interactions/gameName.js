@@ -87,7 +87,10 @@ async function availability(interaction, roster, who = {}) {
 // `src` is set when the member opened the picker themselves (gn:open / gn:change): that is the one worth a gn.view line.
 async function view(interaction, { page = 0, note = null, roster, compact = false, src } = {}) {
   const doc = roster === undefined ? await gameRoster.latest(interaction.guildId) : roster;
-  const [link, avail] = await Promise.all([gameRoster.getLink(interaction.guildId, interaction.user.id), availability(interaction, doc)]);
+  const getLink = () => gameRoster.getLink(interaction.guildId, interaction.user.id);
+  // the compact view of a linked member needs no availability (who holds which name): only the full picker does
+  const early = compact ? await getLink() : null;
+  const [link, avail] = early ? [early, null] : await Promise.all([compact ? null : getLink(), availability(interaction, doc)]);
   if (src) logEvent('gn', 'view', { ...ixCtx(interaction), src, mode: compact && link ? 'compact' : 'full', hasRoster: Boolean(doc), linked: Boolean(link) });
   if (compact && link) return buildPicker({ link, compact: true });
   const notes = [note, avail.complete ? null : LOADING].filter(Boolean).join('\n') || null;
