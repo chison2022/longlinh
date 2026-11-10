@@ -102,4 +102,4 @@ const resetTimers = () => {
   timers.clear();
 };
 
-module.exports = { REJOIN_DELAY_MS, VOICE_TYPES, targetOf, problemOf, syncGuild, syncAll, scheduleSync, onVoiceStateUpdate, statusLine, noteOf, resetTimers };
+module.exports = { REJOIN_DELAY_MS, targetOf, syncGuild, syncAll, scheduleSync, onVoiceStateUpdate, statusLine, noteOf, resetTimers };

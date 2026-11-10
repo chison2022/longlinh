@@ -133,10 +133,8 @@ module.exports = {
   v2Create,
   TK_MARK,
   TK_LEGEND,
-  EMBED_LIMIT,
   truncate,
   packGroups,
   paginateFields,
-  embedLength,
   toMessages,
 };

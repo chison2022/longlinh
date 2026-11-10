@@ -200,7 +200,6 @@ describe('tasks and PT notes', () => {
   });
   it('taskOfWish / effectiveTasks: the own wish is the default, any = none, an explicit choice wins', () => {
     assert.equal(rules.taskOfWish('daytru'), 'daytru');
-    assert.equal(rules.taskOfWish('mobile'), 'daytru');
     assert.equal(rules.taskOfWish('any'), null);
     const l = layoutWith(['a', 'b', 'c']);
     assert.deepEqual(rules.effectiveTasks(l, { b: 'vattu', c: '' }, (id) => ({ a: 'def', b: 'cong', c: 'cong' })[id]), { a: 'def', b: 'vattu', c: '' });

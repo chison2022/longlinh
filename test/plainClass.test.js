@@ -52,15 +52,15 @@ describe('mixed old/new registrations', () => {
   const regs = [
     { discordId: '1', className: OLD, status: 'join' },
     { discordId: '2', className: NEW, status: 'join' },
-    { discordId: '3', className: 'thiết y', status: 'reserve' },
+    { discordId: '3', className: 'thiết y', status: 'join' },
   ];
   it('summarize / groupNamesByClass / orderedClasses give one bucket with the config label', () => {
     const s = summarize(regs, defaults.classes);
-    assert.deepEqual(s.byClass, [{ className: NEW, join: 2, reserve: 1 }]);
+    assert.deepEqual(s.byClass, [{ className: NEW, join: 3 }]);
     const g = groupNamesByClass(regs.map((r) => ({ ...r, displayName: r.discordId })), defaults.classes);
     assert.equal(g.length, 1);
     assert.equal(g[0].className, NEW);
-    assert.deepEqual(g[0].join, ['1', '2']);
+    assert.deepEqual(g[0].join, ['1', '2', '3']);
     assert.equal(orderedClasses(regs, defaults.classes).length, defaults.classes.length);
   });
   it('unknown classes with two spellings merge too', () => {

@@ -272,4 +272,4 @@ function buildEventsView({ events = [], counts = new Map(), selectedId = null, c
   return v2Payload([container]);
 }
 
-module.exports = { COLORS, RULES_HINT, esc, countsLine, minLine, statusLine, fitDescription, splitText, buildEventCard, buildRulesMessages, buildEventPreview, buildMinNotice, buildListMessages, buildEventsView };
+module.exports = { COLORS, RULES_HINT, esc, countsLine, statusLine, fitDescription, buildEventCard, buildRulesMessages, buildEventPreview, buildMinNotice, buildListMessages, buildEventsView };

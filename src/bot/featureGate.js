@@ -41,4 +41,4 @@ async function offReply(interaction) {
   return { content: feature === 'gate' ? GATE_OFF_TEXT : OFF_TEXT, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } };
 }
 
-module.exports = { featureOf, offReply, OFF_TEXT, GATE_OFF_TEXT, RULES };
+module.exports = { featureOf, offReply, OFF_TEXT, GATE_OFF_TEXT };

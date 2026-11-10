@@ -450,11 +450,9 @@ module.exports = {
   refreshPanelNow,
   schedulePanelRefresh,
   postOrUpdatePanel,
-  buildPanelFor,
   redrawAll,
   refreshEventCardNow,
   scheduleEventRefresh,
   postEventCard,
   refreshEventPanelNow,
-  scheduleEventPanelRefresh,
 };

@@ -99,4 +99,4 @@ function cancelScheduled() {
   statuses.clear();
 }
 
-module.exports = { DOC_DEBOUNCE_MS, docError, syncDocNow, scheduleDocSync, getDocStatus, cancelScheduled };
+module.exports = { docError, syncDocNow, scheduleDocSync, getDocStatus, cancelScheduled };

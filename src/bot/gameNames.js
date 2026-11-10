@@ -51,4 +51,4 @@ async function loadGameInfo(guild) {
 // guild -> Map(discordId -> game name) (see loadGameInfo).
 const loadGameNames = async (guild) => (await loadGameInfo(guild)).names;
 
-module.exports = { loadGameInfo, loadGameNames,  invalidateGameNames, noteState };
+module.exports = { loadGameNames, invalidateGameNames, noteState };

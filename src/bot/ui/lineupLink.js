@@ -36,4 +36,4 @@ function buildLineupLinkMessage(event, config, { url, note = '' }) {
   return v2Create(v2Payload([container]));
 }
 
-module.exports = { MAX_URL, LINK_LABEL, parseLineupUrl, linkButton, buildLineupLinkMessage };
+module.exports = { MAX_URL, parseLineupUrl, linkButton, buildLineupLinkMessage };

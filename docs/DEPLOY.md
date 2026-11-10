@@ -60,7 +60,7 @@ Trên laptop, log nằm ở `C:\ProgramData\LongLinh\logs\`:
    ```
    Kết quả gồm: nút nào lỗi và mã lỗi gì, nút nào chậm, lần tự nhắc / tự chốt / tự tạo trận, đồng bộ Sheet, và bảng ✅/❌/⏳ cho 18 mục cần test.
 
-Log không chứa token, DB_URL hay key; chỉ có ID Discord, số đếm và tên game.
+Log không chứa token, chuỗi kết nối DB hay key; chỉ có ID Discord, số đếm và tên game.
 
 ## 6. Cập nhật bản mới
 

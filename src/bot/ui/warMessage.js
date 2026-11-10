@@ -46,8 +46,7 @@ function buildWarMessage(event, regs, config, styles, { unregistered = null } = 
   const section = (content, accessory) => new SectionBuilder().addTextDisplayComponents(textDisplay(content)).setButtonAccessory(accessory);
 
   const joinLine = `✅ **${stats.join}**/${stats.capacity} đi  ${progressBar(stats.join, stats.capacity)}`;
-  const onLeave = regs.filter((r) => r.status === 'absent' && r.auto === 'leave').length; // absent because of a leave request
-  const absentLine = `❌ ${stats.absent} vắng${onLeave ? ` (${onLeave} xin nghỉ)` : ''}${stats.unregistered === null ? '' : ` · ⏳ ${stats.unregistered} chưa đăng ký`}`;
+  const absentLine = `❌ ${stats.absent} vắng${stats.unregistered === null ? '' : ` · ⏳ ${stats.unregistered} chưa đăng ký`}`;
   const codes = classCodes(cfg.classes || defaults.classes); // two classes with the same initials get different codes
   const classLine = stats.byClass.length
     ? stats.byClass.map((c) => `${classMark(styleOf(styles, c.className), codes)} ${c.count}`).join('  ')
@@ -87,7 +86,6 @@ const namesInOrder = (regs, className, canon) =>
 // Name list per class. Long classes continue in "<class> (tiếp)" fields and, when one embed is not
 // enough, in further embeds; no name is ever cut. Returns an array of embeds (group with toMessages).
 // `tk` = { groups } (optional): people of a confirmed Tuyến Khiên group get a marker after the name.
-// A legacy 'reserve' registration counts and is listed exactly like 'join'.
 function buildListEmbeds(event, regs, classes, styles, tk) {
   const linked = new Set(((tk && tk.groups) || []).flat());
   if (linked.size) regs = regs.map((r) => (linked.has(r.discordId) ? { ...r, displayName: `${r.displayName || r.discordId} ${TK_MARK}` } : r));
@@ -95,20 +93,15 @@ function buildListEmbeds(event, regs, classes, styles, tk) {
   const label = (className) => `${styleOf(styles, className).emojiText} ${styleOf(styles, className).plain}`;
   const canon = makeCanon(classes);
   const fields = groupNamesByClass(regs, classes).flatMap((g) => {
-    const names = namesInOrder(regs, g.className, canon); // join and legacy reserve in one list, registration order
+    const names = namesInOrder(regs, g.className, canon); // registration order
     return packGroups([{ items: names }]).map((c, i) => ({ name: i ? `${label(g.className)} (tiếp)` : `${label(g.className)} (${names.length})`, value: c.text }));
   });
-  const absentOf = (leave) => regs.filter((r) => r.status === 'absent' && (r.auto === 'leave') === leave).map((r) => r.displayName || r.discordId);
-  const absent = absentOf(false);
+  const absent = regs.filter((r) => r.status === 'absent').map((r) => r.displayName || r.discordId);
   if (absent.length) {
     packGroups([{ items: absent }]).forEach((c, i) => fields.push({ name: i ? '❌ Vắng (tiếp)' : `❌ Vắng (${absent.length})`, value: c.text }));
   }
-  const onLeave = absentOf(true); // registered absent by the bot because of a leave request
-  if (onLeave.length) {
-    packGroups([{ items: onLeave }]).forEach((c, i) => fields.push({ name: i ? '🙋 Vắng (xin nghỉ) (tiếp)' : `🙋 Vắng (xin nghỉ) (${onLeave.length})`, value: c.text }));
-  }
   const title = truncate(`📋 ${event.title}`, 256);
-  const description = `✅ Tham gia: **${s.join + s.reserve}** · ❌ Vắng: **${s.absent}**${linked.size ? `
+  const description = `✅ Tham gia: **${s.join}** · ❌ Vắng: **${s.absent}**${linked.size ? `
 ${TK_LEGEND}` : ''}`;
   const pages = paginateFields(fields, title.length + description.length + 12, title.length + 12);
   return pages.map((page, i) => {

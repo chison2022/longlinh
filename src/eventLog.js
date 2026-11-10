@@ -5,7 +5,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 
-const AREAS = ['boot', 'ix', 'sched', 'sheet', 'refresh', 'db', 'atlas', 'roster', 'setup', 'admin', 'war', 'gn', 'publish', 'unreg', 'mail', 'event', 'gate', 'voice'];
+const AREAS = ['boot', 'ix', 'sched', 'sheet', 'refresh', 'db', 'roster', 'setup', 'admin', 'war', 'gn', 'publish', 'unreg', 'mail', 'event', 'gate', 'voice'];
 const KEEP_DAYS = 30;
 const FILE_RE = /^events-(\d{4})-(\d{2})-(\d{2})\.jsonl$/;
 const STACK_LINES = 6;
@@ -191,4 +191,4 @@ function parseCustomId(customId) {
   return out;
 }
 
-module.exports = { logEvent, timed, init, stop, setSink, redact, serializeError, createWriter, cleanOld, fileNameFor, dayOf, parseCustomId, ixCtx, AREAS, KEEP_DAYS };
+module.exports = { logEvent, timed, init, stop, setSink, redact, serializeError, createWriter, cleanOld, fileNameFor, dayOf, parseCustomId, ixCtx, AREAS };

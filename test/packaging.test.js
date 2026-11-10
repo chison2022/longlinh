@@ -1,6 +1,5 @@
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
-const crypto = require('node:crypto');
 const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -9,30 +8,7 @@ const { pingOnce } = require('../src/healthPing');
 const { runSelftest } = require('../src/selftest');
 const { ensureRealDir } = require('../src/paths');
 
-const md5 = (s) => crypto.createHash('md5').update(s).digest('hex');
 const silent = { log() {}, warn() {}, error() {} };
-const NOW = Date.parse('2026-10-09T00:00:00Z');
-const DAY = 86400000;
-const ENV = { ATLAS_PUBLIC_KEY: 'pubkey', ATLAS_PRIVATE_KEY: 'privkey', ATLAS_PROJECT_ID: 'proj1' };
-
-const json = (status, body, headers = {}) => ({ status, ok: status >= 200 && status < 300, headers: { get: (k) => headers[k.toLowerCase()] || null }, json: async () => body, text: async () => String(body) });
-
-// Mock Atlas: first call without Authorization gets a Digest challenge, then data. `list` = current access list.
-function mockFetch(list, { ip = '1.2.3.4', postStatus = 200 } = {}) {
-  const calls = [];
-  const fetchFn = async (url, opts = {}) => {
-    calls.push({ url, ...opts });
-    if (url.includes('ipify')) return json(200, ip);
-    if (url.includes('ifconfig.me')) return json(200, ip);
-    if (!opts.headers.Authorization) return json(401, {}, { 'www-authenticate': 'Digest realm="MMS Public API", nonce="abc123", qop="auth", algorithm=MD5' });
-    if (opts.method === 'GET') return json(200, { results: list });
-    if (postStatus === 200) for (const e of JSON.parse(opts.body)) { const i = list.findIndex((x) => x.ipAddress === e.ipAddress); if (i >= 0) list[i] = e; else list.push(e); } // Atlas applies the write
-    return json(postStatus, postStatus === 200 ? {} : { errorCode: 'BAD' });
-  };
-  fetchFn.calls = calls;
-  return fetchFn;
-}
-const posts = (f) => f.calls.filter((c) => c.method === 'POST' && c.headers.Authorization);
 
 describe('connectWithRetry', () => {
   it('retries with growing delays, runs beforeRetry each time, and returns on success', async () => {
@@ -57,9 +33,9 @@ describe('connectWithRetry', () => {
     assert.equal(Math.max(...sleeps), 300000);
   });
 
-  it('fails at once when DB_URL is missing and honours maxAttempts', async () => {
+  it('fails at once when PG_URL is missing and honours maxAttempts', async () => {
     let n = 0;
-    await assert.rejects(connectWithRetry({ connect: async () => { n++; throw new Error('DB_URL is missing in .env'); }, sleep: async () => {}, log: silent }), /DB_URL/);
+    await assert.rejects(connectWithRetry({ connect: async () => { n++; throw new Error('PG_URL is missing in .env'); }, sleep: async () => {}, log: silent }), /PG_URL/);
     assert.equal(n, 1);
     await assert.rejects(connectWithRetry({ connect: async () => { throw new Error('nope'); }, sleep: async () => {}, log: silent, maxAttempts: 2 }), /nope/);
   });

@@ -33,7 +33,7 @@ const NO_EVENT = 'Chưa có bang chiến nào đang diễn ra.';
 
 function countsLine(regs) {
   const s = summarize(regs);
-  return `✅ ${s.join + s.reserve} · ❌ ${s.absent}`; // a legacy 'reserve' counts as join
+  return `✅ ${s.join} · ❌ ${s.absent}`;
 }
 
 // The war time is fixed by the guild schedule (earliest start in the future); the admin only picks the deadline.

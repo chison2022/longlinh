@@ -372,4 +372,4 @@ function buildSetupView(config, note, ctx = {}) {
   };
 }
 
-module.exports = { buildPanel, buildSetupView, missingPermissions, CHANNEL_PERMISSIONS };
+module.exports = { buildPanel, buildSetupView, missingPermissions };

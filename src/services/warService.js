@@ -8,7 +8,7 @@ const STATUS_LABELS = {
   published: '📢 Đã công bố đội hình',
   done: '🏁 Đã kết thúc',
 };
-const REG_LABELS = { join: 'Tham gia', reserve: 'Dự bị', absent: 'Vắng' };
+const REG_LABELS = { join: 'Tham gia', absent: 'Vắng' };
 const DUPLICATE_WINDOW = 12 * HOUR;
 const POST_CLAIM_MS = 10 * 60 * 1000; // a war-message post attempt older than this is considered dead
 

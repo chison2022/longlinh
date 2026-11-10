@@ -168,4 +168,4 @@ function gateHealth(config, guild) {
   return lines;
 }
 
-module.exports = { PRIVILEGED, unsafeRole, KIND_LABEL, PROBLEM_TEXT, OWNER_REMINDER, findClassRole, roleProblem, checkRoles, failureLine, classRoleEntries, gateHealth, roleLabel };
+module.exports = { PRIVILEGED, unsafeRole, KIND_LABEL, PROBLEM_TEXT, findClassRole, roleProblem, checkRoles, failureLine, gateHealth, roleLabel };

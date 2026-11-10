@@ -126,7 +126,7 @@ describe('compare', () => {
     { discordId: 'b', displayName: 'Bình', status: 'join' },
     { discordId: 'c', displayName: 'Chi', status: 'absent' },
     { discordId: 'd', displayName: 'Dũng', status: 'absent' },
-    { discordId: 'r', displayName: 'Ri', status: 'reserve' },
+    { discordId: 'r', displayName: 'Ri', status: 'join' },
   ];
   const att = {
     entries: [
@@ -142,7 +142,7 @@ describe('compare', () => {
     assert.deepEqual(out.came, [{ discordId: 'a', gameName: 'An G', displayName: 'An' }]);
     assert.deepEqual(out.noShow, [
       { discordId: 'b', gameName: 'Bình G', displayName: 'Bình' },
-      { discordId: 'r', gameName: 'Ri G', displayName: 'Ri' }, // older 'reserve' counts as join
+      { discordId: 'r', gameName: 'Ri G', displayName: 'Ri' }, // older 'join' counts as join
     ]);
     assert.deepEqual(out.walkIn, [
       { discordId: 'c', gameName: 'Chi G', displayName: 'Chi', saidAbsent: true },

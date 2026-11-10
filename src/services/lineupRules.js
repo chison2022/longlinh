@@ -142,11 +142,9 @@ const TASK_LABEL_MAX = 30;
 const MAX_CUSTOM_TASKS = 15;
 const CUSTOM_KEY = /^c:[a-z0-9-]{1,30}$/;
 
-// The task a member's own wish gives ('def' | 'cong' | 'daytru' | 'vattu'), or null for 'any' / unknown (older wishes mid / mobile / supply too).
+// The task a member's own wish gives ('def' | 'cong' | 'daytru' | 'vattu'), or null for 'any' / unknown.
 function taskOfWish(pref) {
-  const legacy = { mid: 'cong', mobile: 'daytru', supply: 'vattu' };
-  const key = legacy[pref] || pref;
-  return BUILTIN_TASKS.some((t) => t.key === key) ? key : null;
+  return BUILTIN_TASKS.some((t) => t.key === pref) ? pref : null;
 }
 
 // Free text of a note / task name: mentions and every "@" removed (nothing the bot posts may ping), whitespace folded, cut to `max`.

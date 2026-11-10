@@ -10,7 +10,7 @@ async function connectWithRetry({ connect, beforeRetry, sleep = sleepMs, delays 
     try {
       return await connect();
     } catch (err) {
-      if (/(PG_URL|PG_CA|DB_URL) is missing/.test(err.message) || attempt + 1 >= maxAttempts) throw err;
+      if (/(PG_URL|PG_CA) is missing/.test(err.message) || attempt + 1 >= maxAttempts) throw err;
       const delay = delays[Math.min(attempt, delays.length - 1)];
       log.error(`Cannot connect to the database: ${err.message}\nRetrying in ${delay / 1000}s.`);
       logEvent('db', 'connect_failed', { attempt: attempt + 1, delayMs: delay, err });
@@ -20,4 +20,4 @@ async function connectWithRetry({ connect, beforeRetry, sleep = sleepMs, delays 
   }
 }
 
-module.exports = { connectWithRetry, DELAYS_MS };
+module.exports = { connectWithRetry };

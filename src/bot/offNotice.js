@@ -123,4 +123,4 @@ function resetWarned() {
   leftGuilds.clear();
 }
 
-module.exports = { noticeGuild, noticeDue, classify, thresholdOf, resetWarned, DEFAULT_DAYS };
+module.exports = { noticeGuild, noticeDue, classify, thresholdOf, resetWarned };

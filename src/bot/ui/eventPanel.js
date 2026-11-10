@@ -38,4 +38,4 @@ function buildEventPanel({ events = [], counts = new Map() } = {}) {
   return v2Payload([container]);
 }
 
-module.exports = { EVENT_PANEL_COLOR, MAX_LISTED, panelLine, buildEventPanel };
+module.exports = { EVENT_PANEL_COLOR, MAX_LISTED, buildEventPanel };

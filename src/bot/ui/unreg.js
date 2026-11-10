@@ -162,4 +162,4 @@ function buildUnregView(event, grouped, { styles, confirm = null, incomplete = f
   return v2Payload(parts);
 }
 
-module.exports = { buildUnregView, buildUnregNotice, splitByGame, NO_MEMBERS, NO_ROLE };
+module.exports = { buildUnregView, buildUnregNotice, splitByGame, NO_ROLE };

@@ -278,7 +278,6 @@ function rejectModal(requestId) {
 
 module.exports = {
   LABELS,
-  ALERT_PREFIX,
   safe,
   rosterToken,
   freeToken,

@@ -200,4 +200,4 @@ function resetMemory() {
   failures.clear();
 }
 
-module.exports = { start, ensureUp, isUp, snapshotWar, onLocked, onReopened, catchUp, catchUpSoon, markDone, resetMemory, guildInfoOf };
+module.exports = { start, ensureUp, isUp, snapshotWar, onLocked, onReopened, catchUp, catchUpSoon, markDone, resetMemory };

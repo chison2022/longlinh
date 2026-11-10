@@ -1,4 +1,4 @@
-// Numbers shown on the war message and on the admin dashboard. "Join" always means join + legacy reserve.
+// Numbers shown on the war message and on the admin dashboard.
 const defaults = require('../../config/defaults');
 const { summarize, classId } = require('../services/registrationService');
 const { layoutOf, partyCount } = require('../services/teamService');
@@ -37,9 +37,9 @@ function eventStats(event, regs, config, { unregistered = null } = {}) {
   const layout = layoutOf(config);
   const capacity = partyCount(layout) * layout.partySize;
   const s = summarize(regs, (config && config.classes) || defaults.classes);
-  const join = s.join + s.reserve;
+  const join = s.join;
   const needed = Math.min(Math.ceil(join / layout.partySize), partyCount(layout));
-  const have = (cls) => regs.filter((r) => (r.status === 'join' || r.status === 'reserve') && r.className && classId(r.className) === classId(cls)).length;
+  const have = (cls) => regs.filter((r) => r.status === 'join' && r.className && classId(r.className) === classId(cls)).length;
   const missing = needed
     ? [defaults.healerClass, defaults.tankClass].map((label) => ({ label, have: have(label), needed })).filter((m) => m.have < m.needed)
     : [];
@@ -47,7 +47,7 @@ function eventStats(event, regs, config, { unregistered = null } = {}) {
     join,
     absent: s.absent,
     capacity,
-    byClass: s.byClass.map((c) => ({ className: c.className, count: c.join + c.reserve })).filter((c) => c.count > 0),
+    byClass: s.byClass.map((c) => ({ className: c.className, count: c.join })).filter((c) => c.count > 0),
     missing,
     unregistered,
   };

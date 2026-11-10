@@ -215,7 +215,6 @@ const stylesOf = (guild, config) => resolveClassStyles(guild, config.classes, co
 
 module.exports = {
   slug,
-  unicodePrefix,
   matchClassStyles,
   styleOf,
   optionEmoji,
@@ -228,5 +227,4 @@ module.exports = {
   invalidateClassStyles,
   clearClassStyles,
   editReplyWithEmojiFallback,
-  isInvalidFormBody,
 };

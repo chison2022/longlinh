@@ -69,9 +69,9 @@ function declaredBy(members, id) {
 // The group containing `id` (array of ids) or null.
 const groupOf = (groups, id) => (groups || []).find((g) => g.includes(id)) || null;
 
-// { groups, carriers } for the people registered join/reserve in `regs`: what the board, image and exports need.
+// { groups, carriers } for the people registered join in `regs`: what the board, image and exports need.
 function contextFor(members, regs) {
-  const people = (regs || []).filter((r) => r.status === 'join' || r.status === 'reserve').map((r) => r.discordId);
+  const people = (regs || []).filter((r) => r.status === 'join').map((r) => r.discordId);
   const here = new Set(people);
   return {
     groups: buildGroups(members, here),

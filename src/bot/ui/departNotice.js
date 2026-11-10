@@ -81,4 +81,4 @@ function messageTexts(message) {
   return out;
 }
 
-module.exports = { buildDepartNotice, buildDepartDone, messageTexts, noticeParts, MAX_LINES, TITLE, NOTE };
+module.exports = { buildDepartNotice, buildDepartDone, messageTexts, noticeParts, MAX_LINES, TITLE };

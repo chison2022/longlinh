@@ -71,4 +71,4 @@ function installFileLogging(dir, { monitorOnly = false, ...options } = {}) {
   return log;
 }
 
-module.exports = { createRotatingLog, installFileLogging, MAX_BYTES, KEEP };
+module.exports = { createRotatingLog, installFileLogging };

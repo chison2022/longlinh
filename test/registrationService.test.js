@@ -7,27 +7,26 @@ const reg = (id, status, className, displayName = `N${id}`) => ({ discordId: Str
 describe('summarize', () => {
   const classes = ['A', 'B', 'C'];
   it('empty input', () => {
-    assert.deepEqual(summarize([], classes), { join: 0, reserve: 0, absent: 0, byClass: [] });
-    assert.deepEqual(summarize([]), { join: 0, reserve: 0, absent: 0, byClass: [] });
+    assert.deepEqual(summarize([], classes), { join: 0, absent: 0, byClass: [] });
+    assert.deepEqual(summarize([]), { join: 0, absent: 0, byClass: [] });
   });
-  it('counts statuses and per-class join/reserve; absent excluded from per-class', () => {
-    const regs = [reg(1, 'join', 'B'), reg(2, 'reserve', 'B'), reg(3, 'absent', 'A'), reg(4, 'join', 'A'), reg(5, 'join', 'B')];
+  it('counts statuses and per-class joins; absent excluded from per-class', () => {
+    const regs = [reg(1, 'join', 'B'), reg(2, 'join', 'B'), reg(3, 'absent', 'A'), reg(4, 'join', 'A'), reg(5, 'join', 'B')];
     assert.deepEqual(summarize(regs, classes), {
-      join: 3,
-      reserve: 1,
+      join: 4,
       absent: 1,
       byClass: [
-        { className: 'A', join: 1, reserve: 0 },
-        { className: 'B', join: 2, reserve: 1 },
+        { className: 'A', join: 1 },
+        { className: 'B', join: 3 },
       ],
     });
   });
   it('classes not in config come after config classes in first-seen order; missing class => Chưa rõ', () => {
-    const regs = [reg(1, 'join', 'Z'), reg(2, 'join', null), reg(3, 'reserve', 'C'), reg(4, 'join', 'Y'), reg(5, 'join', 'Z')];
+    const regs = [reg(1, 'join', 'Z'), reg(2, 'join', null), reg(3, 'join', 'C'), reg(4, 'join', 'Y'), reg(5, 'join', 'Z')];
     const s = summarize(regs, classes);
     assert.deepEqual(
-      s.byClass.map((c) => [c.className, c.join, c.reserve]),
-      [['C', 0, 1], ['Z', 2, 0], ['Chưa rõ', 1, 0], ['Y', 1, 0]]
+      s.byClass.map((c) => [c.className, c.join]),
+      [['C', 1], ['Z', 2], ['Chưa rõ', 1], ['Y', 1]]
     );
   });
   it('class only seen via absent registrations is not listed', () => {
@@ -36,30 +35,30 @@ describe('summarize', () => {
     assert.equal(s.absent, 1);
   });
   it('totals equal the number of registrations for 80 regs', () => {
-    const statuses = ['join', 'reserve', 'absent'];
+    const statuses = ['join', 'join', 'absent'];
     const regs = Array.from({ length: 80 }, (_, i) => reg(i, statuses[i % 3], classes[i % 4]));
     const s = summarize(regs, classes);
-    assert.equal(s.join + s.reserve + s.absent, 80);
-    const perClassTotal = s.byClass.reduce((n, c) => n + c.join + c.reserve, 0);
-    assert.equal(perClassTotal, s.join + s.reserve);
+    assert.equal(s.join + s.absent, 80);
+    const perClassTotal = s.byClass.reduce((n, c) => n + c.join, 0);
+    assert.equal(perClassTotal, s.join);
   });
 });
 
 describe('groupNamesByClass', () => {
-  it('groups names by class, join/reserve separated, absent skipped, config order first', () => {
+  it('groups names by class, absent skipped, config order first', () => {
     const regs = [
       reg(1, 'join', 'B', 'Bình'),
-      reg(2, 'reserve', 'A', 'An'),
+      reg(2, 'join', 'A', 'An'),
       reg(3, 'absent', 'A', 'Vắng Mặt'),
       reg(4, 'join', null, 'Không Phái'),
       reg(5, 'join', 'A', 'Anh'),
       reg(6, 'join', 'Q', 'Quân'),
     ];
     assert.deepEqual(groupNamesByClass(regs, ['A', 'B']), [
-      { className: 'A', join: ['Anh'], reserve: ['An'] },
-      { className: 'B', join: ['Bình'], reserve: [] },
-      { className: 'Chưa rõ', join: ['Không Phái'], reserve: [] },
-      { className: 'Q', join: ['Quân'], reserve: [] },
+      { className: 'A', join: ['An', 'Anh'] },
+      { className: 'B', join: ['Bình'] },
+      { className: 'Chưa rõ', join: ['Không Phái'] },
+      { className: 'Q', join: ['Quân'] },
     ]);
   });
   it('falls back to discordId when displayName is missing', () => {

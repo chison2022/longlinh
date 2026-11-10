@@ -180,7 +180,7 @@ describe('war message class line: "<emoji> <code> <count>"', () => {
 describe('📋 Danh sách: names only per class, then "❌ Vắng"', () => {
   const regs = [
     ...makeRegs(3, { classOf: () => 'Tố Vấn', nameOf: (i) => `Vấn${i}` }),
-    ...makeRegs(2, { classOf: () => 'Thiết Y', nameOf: (i) => `Y${i}`, offset: 10, statusOf: () => 'reserve' }),
+    ...makeRegs(2, { classOf: () => 'Thiết Y', nameOf: (i) => `Y${i}`, offset: 10, statusOf: () => 'join' }),
     ...makeRegs(2, { classOf: () => 'Tố Vấn', nameOf: (i) => `Nghỉ${i}`, offset: 20, statusOf: () => 'absent' }),
   ];
   it('no "✅" prefix on the lines; the class fields hold plain names', () => {
@@ -189,7 +189,7 @@ describe('📋 Danh sách: names only per class, then "❌ Vắng"', () => {
     const cls = fields.find((f) => f.name.includes('Tố Vấn'));
     assert.equal(cls.value, 'Vấn0, Vấn1, Vấn2');
     assert.ok(!fields.some((f) => f.value.includes('✅')));
-    assert.ok(fields.find((f) => f.name.includes('Thiết Y')).value === 'Y10, Y11', 'a legacy reserve is listed like a join');
+    assert.ok(fields.find((f) => f.name.includes('Thiết Y')).value === 'Y10, Y11', 'listed in registration order');
   });
   it('the last section is "❌ Vắng (n)" with the names of those who said no; none when nobody did', () => {
     const fields = buildListEmbeds(event, regs, defaults.classes).flatMap((e) => e.toJSON().fields);

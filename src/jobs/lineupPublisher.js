@@ -241,4 +241,4 @@ function resetPolling() {
   empty = 0;
 }
 
-module.exports = { runOnce, publishOne, step, start, stop, resetPolling, FAST_MS, SLOW_MS, IDLE_MS, EMPTY_BEFORE_SLOW, served };
+module.exports = { runOnce, step, start, stop, resetPolling, FAST_MS, SLOW_MS, IDLE_MS, EMPTY_BEFORE_SLOW, served };

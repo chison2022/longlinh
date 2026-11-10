@@ -116,4 +116,4 @@ function buildReplyView(letter) {
   return { content: truncate(lines.join('\n'), 2000), allowedMentions: { parse: [] } };
 }
 
-module.exports = { LABELS, STATUS_LABELS, STATUS_COLORS, buildMailPanel, buildSendStep, buildSendModal, buildCodeModal, buildReplyModal, buildLetterCard, buildReplyView };
+module.exports = { LABELS, STATUS_LABELS, buildMailPanel, buildSendStep, buildSendModal, buildCodeModal, buildReplyModal, buildLetterCard, buildReplyView };

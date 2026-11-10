@@ -101,4 +101,4 @@ async function handle(interaction, parts) {
   return interaction.editReply(firstView(choices));
 }
 
-module.exports = { handle, firstView, newView, confirmView };
+module.exports = { handle, confirmView };

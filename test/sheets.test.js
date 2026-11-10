@@ -87,7 +87,7 @@ beforeEach(() => {
     { discordId: sid(1), displayName: 'An', className: 'Tố Vấn', status: 'join', createdAt: vn(2026, 10, 7, 9, 5) },
     { discordId: sid(2), displayName: 'Bình', className: '🛡️ Thiết Y', status: 'join', createdAt: vn(2026, 10, 7, 9, 10) },
     { discordId: sid(3), displayName: 'Chi', className: 'Huyết Hà', status: 'absent', createdAt: vn(2026, 10, 7, 9, 15) },
-    { discordId: sid(4), displayName: 'Dũng', className: null, status: 'reserve', createdAt: vn(2026, 10, 7, 9, 20) },
+    { discordId: sid(4), displayName: 'Dũng', className: null, status: 'join', createdAt: vn(2026, 10, 7, 9, 20) },
   ];
   tkMembers = [];
   histWars = [];

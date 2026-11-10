@@ -57,16 +57,16 @@ function orderedClasses(regs, classes) {
   return [...classes, ...extra];
 }
 
-// Counts per status plus per-class join/reserve counts (classes with 0 are skipped).
+// Counts per status plus per-class join counts (classes with 0 are skipped).
 function summarize(regs, classes = []) {
-  const totals = { join: 0, reserve: 0, absent: 0 };
+  const totals = { join: 0, absent: 0 };
   const per = new Map();
   const canon = makeCanon(classes);
   for (const r of regs) {
     totals[r.status] = (totals[r.status] || 0) + 1;
     if (r.status === 'absent') continue;
     const k = r.className ? canon(r.className) : UNKNOWN_CLASS;
-    const c = per.get(k) || { join: 0, reserve: 0 };
+    const c = per.get(k) || { join: 0 };
     c[r.status] += 1;
     per.set(k, c);
   }
@@ -83,7 +83,7 @@ function groupNamesByClass(regs, classes = []) {
   for (const r of regs) {
     if (r.status === 'absent') continue;
     const k = r.className ? canon(r.className) : UNKNOWN_CLASS;
-    if (!groups.has(k)) groups.set(k, { className: k, join: [], reserve: [] });
+    if (!groups.has(k)) groups.set(k, { className: k, join: [] });
     groups.get(k)[r.status].push(r.displayName || r.discordId);
   }
   return orderedClasses(regs, classes)

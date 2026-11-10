@@ -20,4 +20,4 @@ function startHealthPing(options) {
   return () => clearInterval(timer);
 }
 
-module.exports = { pingOnce, startHealthPing, INTERVAL_MS };
+module.exports = { pingOnce, startHealthPing };

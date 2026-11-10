@@ -54,4 +54,4 @@ function clearMemberCache() {
   inflight.clear();
 }
 
-module.exports = { ensureMembers, MEMBERS_WARNING, clearMemberCache, isRateLimit, isComplete };
+module.exports = { ensureMembers, MEMBERS_WARNING, clearMemberCache, isComplete };

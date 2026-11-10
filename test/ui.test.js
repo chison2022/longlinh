@@ -27,10 +27,10 @@ const makeEvent = (patch = {}) => ({
 
 // 80 registrations: 35 in one class, others spread, 4 with no class, mixed status.
 function eightyRegs() {
-  const statuses = ['join', 'join', 'join', 'reserve', 'absent'];
+  const statuses = ['join', 'join', 'join', 'join', 'absent'];
   return makeRegs(80, {
     classOf: (i) => (i < 35 ? BIG : i >= 76 ? null : CLASSES[i % CLASSES.length]),
-    statusOf: (i) => (i < 35 ? (i % 7 === 6 ? 'reserve' : 'join') : statuses[i % statuses.length]),
+    statusOf: (i) => (i < 35 ? (i % 7 === 6 ? 'join' : 'join') : statuses[i % statuses.length]),
   });
 }
 
@@ -59,9 +59,9 @@ describe('buildWarMessage (Components V2)', () => {
     assert.ok(line({ warDurationMinutes: 90 }).endsWith(`– <t:${TS(vn(2026, 10, 10, 21, 30))}:t>`));
   });
   it('join count / capacity / bar, absent and unregistered (only when known)', () => {
-    const regs = makeRegs(9, { statusOf: (i) => (i < 5 ? 'join' : i < 7 ? 'reserve' : i === 7 ? 'join' : 'absent') });
+    const regs = makeRegs(9, { statusOf: (i) => (i < 5 ? 'join' : i < 7 ? 'join' : i === 7 ? 'join' : 'absent') });
     const withUnreg = assertV2Message(buildWarMessage(makeEvent(), regs, CONFIG, undefined, { unregistered: 47 })).text;
-    assert.match(withUnreg, /✅ \*\*8\*\*\/60 đi  ▰▱▱▱▱▱▱▱▱▱/); // join + legacy reserve, 2 groups x 5 PT x 6
+    assert.match(withUnreg, /✅ \*\*8\*\*\/60 đi  ▰▱▱▱▱▱▱▱▱▱/); // 2 groups x 5 PT x 6
     assert.match(withUnreg, /❌ 1 vắng · ⏳ 47 chưa đăng ký/);
     const unknown = assertV2Message(buildWarMessage(makeEvent(), regs, CONFIG)).text;
     assert.match(unknown, /❌ 1 vắng/);
@@ -82,10 +82,10 @@ describe('buildWarMessage (Components V2)', () => {
     const text = assertV2Message(buildWarMessage(makeEvent(), regs, { ...CONFIG, groupCount: 1 })).text;
     assert.match(text, /\*\*40\*\*\/30 đi  ▰{10}/);
   });
-  it('classes with at least one join on one line, in config order; reserve counts like join', () => {
+  it('classes with at least one join on one line, in config order; every join counts', () => {
     const regs = [
       ...makeRegs(2, { classOf: () => CLASSES[2] }),
-      ...makeRegs(3, { classOf: () => CLASSES[0], offset: 10, statusOf: () => 'reserve' }),
+      ...makeRegs(3, { classOf: () => CLASSES[0], offset: 10, statusOf: () => 'join' }),
       ...makeRegs(1, { classOf: () => CLASSES[1], offset: 20, statusOf: () => 'absent' }),
     ];
     const line = assertV2Message(buildWarMessage(makeEvent(), regs, CONFIG)).text.split('\n').find((l) => /\d/.test(l) && l.includes(EMO(CLASSES[0])));
@@ -191,7 +191,7 @@ describe('buildListEmbeds', () => {
     const classFields = fields.filter((f) => !f.name.startsWith('❌ Vắng'));
     assert.ok(classFields[classFields.length - 1].name.includes('Chưa rõ'));
   });
-  it('lists every registered (join/reserve) member for a realistic 80-person guild', () => {
+  it('lists every registered member for a realistic 80-person guild', () => {
     const regs = eightyRegs();
     const text = allText(buildListEmbeds(makeEvent(), regs, CLASSES));
     const missing = regs.filter((r) => r.status !== 'absent' && !text.includes(r.displayName));

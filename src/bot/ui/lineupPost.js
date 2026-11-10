@@ -15,4 +15,4 @@ function buildLineupPost(event, config, png) {
   return { content, files: [new AttachmentBuilder(png, { name: FILE_NAME })], components: [row], allowedMentions: { parse: [] } };
 }
 
-module.exports = { MINE_LABEL, FILE_NAME, buildLineupPost };
+module.exports = { buildLineupPost };

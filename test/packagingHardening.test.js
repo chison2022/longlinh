@@ -5,34 +5,12 @@ const assert = require('node:assert/strict');
 const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
-const { EventEmitter } = require('node:events');
 const { ensureRealDir, logDir } = require('../src/paths');
 const { listen } = require('../src/listen');
 const { generatePassword, resolvePassword, PASSWORD_ALPHABET } = require('../packaging/build');
 
 const root = path.join(__dirname, '..');
 const read = (...p) => fs.readFileSync(path.join(root, ...p), 'utf8');
-const silent = { log() {}, warn() {}, error() {} };
-const NOW = Date.parse('2026-10-09T00:00:00Z');
-const DAY = 86400000;
-const ENV = { ATLAS_PUBLIC_KEY: 'pubkey', ATLAS_PRIVATE_KEY: 'privkey', ATLAS_PROJECT_ID: 'proj1' };
-const json = (status, body, headers = {}) => ({ status, ok: status >= 200 && status < 300, headers: { get: (k) => headers[k.toLowerCase()] || null }, json: async () => body, text: async () => String(body) });
-
-// Mock Atlas with a stateful list. applyPost=false simulates a POST that is accepted but does not change the entry.
-function atlas(list, { applyPost = true } = {}) {
-  const calls = [];
-  const fetchFn = async (url, opts = {}) => {
-    calls.push({ url, ...opts });
-    if (url.includes('ipify')) return json(200, '1.2.3.4');
-    if (!opts.headers.Authorization) return json(401, {}, { 'www-authenticate': 'Digest realm="r", nonce="abc", qop="auth"' });
-    if (opts.method === 'GET') return json(200, { results: list });
-    if (applyPost) for (const e of JSON.parse(opts.body)) { const i = list.findIndex((x) => x.ipAddress === e.ipAddress); if (i >= 0) list[i] = e; else list.push(e); }
-    return json(200, {});
-  };
-  fetchFn.calls = calls;
-  return fetchFn;
-}
-
 describe('app.js start order (M3, L2, L5)', () => {
   const app = read('app.js');
 

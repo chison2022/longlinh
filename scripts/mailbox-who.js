@@ -2,7 +2,7 @@
 //   npm run mail:who -- --guild <guildId> --no <letter no> [--key <private key file>]
 // Asks for the passphrase (typing hidden; or the env MAILBOX_PASSPHRASE of the REAL environment, never one from .env), decrypts senderEnc of that letter and prints the Discord id, the member's
 // current name (Discord REST with the bot token), the letter's category and date. Every lookup is appended to logs/mailbox-lookups.log
-// (time, guild, letter no, OS user, result) and logged as mail.lookup. Needs DB_URL and DISCORD_TOKEN in .env.
+// (time, guild, letter no, OS user, result) and logged as mail.lookup. Needs PG_URL, PG_CA and DISCORD_TOKEN in .env.
 // The passphrase may come from the real process environment only: read BEFORE dotenv runs, so a MAILBOX_PASSPHRASE sitting in .env
 // (a file the bot's machine and the installer carry) is ignored.
 const REAL_ENV_PASSPHRASE = process.env.MAILBOX_PASSPHRASE;

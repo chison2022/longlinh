@@ -36,7 +36,7 @@ const DAY_MS = 24 * 3600 * 1000;
 const LINK = { admin: 'Admin ghép', self: 'Tự liên kết', selfFree: 'Tự gõ tên', auto: 'Tự khớp tên' };
 const WEEK_STATE = { join: '✅ Đi', absent: '❌ Vắng', none: '⏳ Chưa báo' };
 // a past war. With the war's result screen imported (attendance): went (registered or not), registered but did not come; without it
-// the registration alone tells. An older 'reserve' counts as join. notYet = joined the guild after that war.
+// the registration alone tells. notYet = joined the guild after that war.
 const WAR_STATE = { join: '✅ Đi', none: '⏳ Không đi', absent: '❌ Vắng', noShow: '⚠️ Đăng ký nhưng không tham gia', notYet: '🆕 Chưa vào bang' };
 const EVENT_STATUS = { open: 'Đang mở', locked: 'Đã chốt', cancelled: 'Đã huỷ', done: 'Đã kết thúc' };
 const EVENT_REPLY = { yes: '✅ Tham gia', maybe: '❓ Có thể', no: '❌ Không' };

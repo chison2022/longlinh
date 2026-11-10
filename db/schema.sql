@@ -1,4 +1,4 @@
--- Long Linh: PostgreSQL schema (draft for the move off MongoDB Atlas, see the plan in memory "pg-migration-plan").
+-- Long Linh: PostgreSQL schema (the bot moved here from MongoDB Atlas in October 2026).
 --
 -- Conventions
 -- - Discord snowflakes (guild, user, channel, message ids) are text: they overflow a JS number.

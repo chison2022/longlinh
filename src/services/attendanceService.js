@@ -146,7 +146,7 @@ async function getAttendance(eventId) {
 // ---------- compare ----------
 
 // Registrations vs the people who really came. `names` / `displayNames` (Maps discordId -> text) fill the game / Discord name of
-// those the registrations or the screen do not carry. 'reserve' (older registrations) counts as join.
+// those the registrations or the screen do not carry.
 // came = joined + present; noShow = joined, not present; walkIn = present without a join (saidAbsent: registered as absent);
 // unknown = present names with no Discord id. Item: { discordId, gameName, displayName }.
 // While names are unknown, a registrant who is not on the screen and has no game name in `names` (no link to find them by) might be

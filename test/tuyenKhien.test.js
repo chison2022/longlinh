@@ -111,7 +111,7 @@ describe('linkService (pure)', () => {
   it('contextFor: groups among participants only; carriers among participants', () => {
     const rs = [
       { discordId: 'a', status: 'join' },
-      { discordId: 'b', status: 'reserve' },
+      { discordId: 'b', status: 'join' },
       { discordId: 'c', status: 'absent' },
     ];
     const ms = [{ discordId: 'a', links: ['b', 'c'], tuyenKhien: true }, { discordId: 'c', tuyenKhien: true, links: [] }];

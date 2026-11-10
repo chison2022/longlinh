@@ -290,10 +290,10 @@ describe('dashboard: edit vs post, forgotten ids', () => {
       defaults.refreshDebounceMs = saved;
     }
   });
-  it('"Xem danh sách" lists legacy reserves merged with joins in registration order', () => {
+  it('"Xem danh sách" lists the joins of a class in registration order', () => {
     const { buildListEmbeds } = require('../src/bot/ui/warMessage');
     const cls = defaults.classes[0];
-    const rs = ['A:reserve', 'B:join', 'C:reserve'].map((x) => ({ discordId: x[0], displayName: x[0], status: x.slice(2), className: cls }));
+    const rs = ['A:join', 'B:join', 'C:join'].map((x) => ({ discordId: x[0], displayName: x[0], status: x.slice(2), className: cls }));
     const value = buildListEmbeds(baseEvent(), rs, defaults.classes)[0].toJSON().fields[0].value;
     assert.ok(value.indexOf('A') < value.indexOf('B') && value.indexOf('B') < value.indexOf('C'), value);
   });
@@ -770,6 +770,3 @@ describe('adm:lock reopen deadline', () => {
   });
 });
 
-describe('reserve is treated like join everywhere it is read', () => {
-  const { summarize } = registrationService;
-});

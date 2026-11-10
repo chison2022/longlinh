@@ -81,4 +81,4 @@ function logResults(ctx, results) {
   });
 }
 
-module.exports = { postAllPanels, summaryLines, logResults, gateSkipReason, LABELS };
+module.exports = { postAllPanels, summaryLines, logResults, LABELS };
