@@ -218,6 +218,7 @@ Bot ghi 4 tab, mỗi tab là một Bảng (Table) có bộ lọc trên mọi c�
 | `ThanhVien` | Mỗi nhân vật đang ở bang một dòng (tên game, phái, chức vụ, số ngày, online lần cuối, trạng thái, tên Discord, liên kết, vai trò, Tuyến Khiên, ghi chú, tên cũ, ngày quay lại), cộng các thành viên chỉ có trên Discord |
 | `BangChien_TuanNay` | Trạng thái báo danh trận tuần này (✅ Đi / ❌ Vắng / ⏳ Chưa báo) |
 | `BangChien_LichSu` | Các trận đã đánh trong tháng: ✅ Đi / ⏳ Không đi / ❌ Vắng / ⚠️ Đăng ký nhưng không tham gia / 🆕 Chưa vào bang |
+| `BaoDanh` | Bảng báo danh 12 trận gần nhất: mỗi nhân vật một dòng, mỗi trận một cột (ngày/tháng) — `V` đi, `X` vắng hoặc đăng ký mà không tham gia, trống = không báo |
 | `SuKien` | Ai trả lời sự kiện nào |
 
 - Các cột tra cứu ở tab bang chiến / sự kiện là công thức `VLOOKUP` sang `ThanhVien` (tự dùng `,` hay `;` theo ngôn ngữ của Sheet).

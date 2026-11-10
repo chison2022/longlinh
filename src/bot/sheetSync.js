@@ -1,4 +1,4 @@
-// Feeds the admin's Google Sheet: the member sheet of feed.ALL_TABS (ThanhVien, BangChien_TuanNay, BangChien_LichSu, SuKien), written
+// Feeds the admin's Google Sheet: the member sheet of feed.ALL_TABS (ThanhVien, BangChien_TuanNay, BangChien_LichSu, BaoDanh, SuKien), written
 // by managedTab so the cells people edited are kept, and the tabs of the older layouts deleted. Debounced like the war message refresh:
 // a burst of registrations makes ONE sync ~20 s later; "🔄 Đồng bộ ngay" (in the 📊 Google Sheet view) syncs at once. Nothing here throws:
 // without a key file or a sheet id the sync is simply off, and failures are logged and returned as a Vietnamese sentence.
@@ -55,8 +55,20 @@ async function runOnce(client, guildId, note = {}) {
     // this week's war (between wars the most recent one stays instead of wiping the tab); history = the finished wars of the month
     const weekWar = (await warService.getCurrentEvent(guildId)) || (await warService.getLatestEvent(guildId));
     const done = (await warService.listSince(guildId, feed.monthStart())).filter((w) => w.status === 'done' && !(weekWar && String(w._id) === String(weekWar._id)));
-    const withRegs = async (war) => ({ war, regs: await listRegistrations(war._id) });
-    const [week, history, attendance] = await Promise.all([weekWar ? withRegs(weekWar) : null, Promise.all(done.map(withRegs)), attendanceService.history(guildId)]);
+    // the attendance matrix: the last finished wars whatever the month (the registrations of a war are read once for both tabs)
+    const lastDone = await warService.listLastDone(guildId, feed.MATRIX_WARS);
+    const regsOf = new Map();
+    const withRegs = (war) => {
+      const key = String(war._id);
+      if (!regsOf.has(key)) regsOf.set(key, listRegistrations(war._id));
+      return regsOf.get(key).then((regs) => ({ war, regs }));
+    };
+    const [week, history, matrix, attendance] = await Promise.all([
+      weekWar ? withRegs(weekWar) : null,
+      Promise.all(done.map(withRegs)),
+      Promise.all(lastDone.map(withRegs)),
+      attendanceService.history(guildId),
+    ]);
     let events = null; // a switched-off feature or a guild that never had an event: no SuKien tab (an existing one is left as it is)
     if (isOn(config, 'events')) {
       const { items, any } = await eventService.listForSheet(guildId);
@@ -65,7 +77,7 @@ async function runOnce(client, guildId, note = {}) {
 
     const info = await api.getSpreadsheet(config.sheetId);
     const tabs = feed.buildSheet(
-      { config, infos, roster: found ? found.roster.members : [], rosterAt: found ? rosterDay(found.roster) : null, match: found ? found.match : null, dbMembers, departed, week, history, attendance, events },
+      { config, infos, roster: found ? found.roster.members : [], rosterAt: found ? rosterDay(found.roster) : null, match: found ? found.match : null, dbMembers, departed, week, history, matrix, attendance, events },
       { sep: formulaSeparator(info.locale) }
     );
     const out = {};

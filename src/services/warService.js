@@ -251,6 +251,12 @@ function listRecentDone(days = 14) {
   return db.q(`${EVENT_SQL} where w.status = 'done' and w.start_at > $1`, [new Date(Date.now() - days * 24 * HOUR)]);
 }
 
+// The last `limit` finished wars of a guild, oldest first (the attendance matrix of the sheet).
+async function listLastDone(guildId, limit) {
+  const rows = await db.q(`${EVENT_SQL} where w.guild_id = $1 and w.status = 'done' order by w.start_at desc limit $2`, [guildId, limit]);
+  return rows.reverse();
+}
+
 function findDueLocks(now) {
   return db.q(`${EVENT_SQL} where w.status = 'open' and w.deadline_at <= $1`, [now]);
 }
@@ -332,6 +338,7 @@ module.exports = {
   listClosed,
   claimOpenPing,
   listRecentDone,
+  listLastDone,
   findDueReminders,
   claimReminder,
   MANUAL_REMIND_COOLDOWN_MS,

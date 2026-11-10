@@ -14,11 +14,13 @@ const MEMBER_TAB = 'ThanhVien';
 const WEEK_TAB = 'BangChien_TuanNay';
 const HISTORY_TAB = 'BangChien_LichSu';
 const EVENT_TAB = 'SuKien';
-const ALL_TABS = [MEMBER_TAB, WEEK_TAB, HISTORY_TAB, EVENT_TAB];
+const MATRIX_TAB = 'BaoDanh';
+const ALL_TABS = [MEMBER_TAB, WEEK_TAB, HISTORY_TAB, MATRIX_TAB, EVENT_TAB];
+const MATRIX_WARS = 12; // the attendance matrix keeps this many finished wars (about a quarter)
 // Tabs of the older layouts: deleted on sync (the user's choice, 2026-10-22; the data stays in the DB).
 const OLD_TABS = ['LongLinh_DangKy', 'LongLinh_GameRoster', 'LongLinh_DanhBa', 'LongLinh_ChuyenCan', 'LongLinh_SuKien', 'LongLinh_XinNghi', 'LongLinh_ViPham', 'LongLinh_QuayThuong', 'BaoDanh_BangChien', 'BangChien'];
 // The sentence part that names them (the "sheet connected" reply and the 📊 view).
-const tabsText = () => `${MEMBER_TAB}, ${WEEK_TAB}, ${HISTORY_TAB}; khi bang có sự kiện thì thêm ${EVENT_TAB}`;
+const tabsText = () => `${MEMBER_TAB}, ${WEEK_TAB}, ${HISTORY_TAB}, ${MATRIX_TAB}; khi bang có sự kiện thì thêm ${EVENT_TAB}`;
 
 // Columns are only ever APPENDED: the lookups below (and the managers' own formulas) count them.
 const MEMBER_HEADER = ['Tên game', 'Phái', 'Chức vụ', 'Ngày trong bang', 'Online lần cuối', 'Trạng thái', 'Tên Discord', 'Discord ID', 'Liên kết', 'Trong server', 'Vai trò', 'Tuyến Khiên', 'Ghi chú', 'Tên cũ', 'Ngày quay lại', 'ID game'];
@@ -38,6 +40,9 @@ const WEEK_STATE = { join: '✅ Đi', absent: '❌ Vắng', none: '⏳ Chưa bá
 // a past war. With the war's result screen imported (attendance): went (registered or not), registered but did not come; without it
 // the registration alone tells. notYet = joined the guild after that war.
 const WAR_STATE = { join: '✅ Đi', none: '⏳ Không đi', absent: '❌ Vắng', noShow: '⚠️ Đăng ký nhưng không tham gia', notYet: '🆕 Chưa vào bang' };
+// the same states in the BaoDanh matrix (one letter per war): V = went, X = said no or did not come, blank = no answer / not in the guild yet
+const MATRIX_STATE = { join: 'V', none: '', absent: 'X', noShow: 'X', notYet: '' };
+const MATRIX_FIXED = ['STT', 'Tên game', 'Phái']; // then one column per war (dd/mm), 'Số trận đi'
 const EVENT_STATUS = { open: 'Đang mở', locked: 'Đã chốt', cancelled: 'Đã huỷ', done: 'Đã kết thúc' };
 const EVENT_REPLY = { yes: '✅ Tham gia', maybe: '❓ Có thể', no: '❌ Không' };
 
@@ -54,6 +59,11 @@ const warLabel = (w) => {
   const p = toLocalParts(new Date(w.startAt));
   return `${DAY_NAMES[p.dow]} ${pad(p.day)}/${pad(p.month + 1)}`;
 };
+// "14/11": a war column of the BaoDanh matrix.
+const dayMonth = (d) => {
+  const p = toLocalParts(new Date(d));
+  return `${pad(p.day)}/${pad(p.month + 1)}`;
+};
 const roleOf = (m) => (m && normalizeRole(m.missionPref) !== 'any' ? plainRoleName(m.missionPref) : '');
 
 // 00:00 local time on the 1st of the current month (the history tab keeps the wars from then on).
@@ -69,6 +79,10 @@ const personKey = (get) => {
   const id = String(get('Discord ID') || '').trim();
   return id ? `d:${id}` : '';
 };
+const matrixKey = (get) => {
+  const game = String(get('Tên game') || '').trim();
+  return game ? `g:${nameKey(game)}` : '';
+};
 const eventKey = (get) => `${get('Sự kiện') || ''}|${get('Ngày') || ''}|${get('Discord ID') || get('Tên Discord') || ''}`;
 
 // Every tab of the sheet. `data`:
@@ -81,12 +95,13 @@ const eventKey = (get) => `${get('Sự kiện') || ''}|${get('Ngày') || ''}|${g
 //   departed    { ids: Set of Discord ids linked to characters that left, keys: Set of their name keys }
 //   week        { war, regs } of this week's war, or null
 //   history     [{ war, regs }] of the finished wars of this month, oldest first
+//   matrix      [{ war, regs }] of the last finished wars whatever the month, oldest first (the BaoDanh tab; only the last MATRIX_WARS are written)
 //   attendance  attendanceService.history(): { wars: [{ eventId }], people: Map discordId -> { byWar: Map eventId -> came|noShow|walkIn|absent|unconfirmed } }
 //   events      eventService.listForSheet().items, or null for no SuKien tab
 // `sep` = formula separator of the spreadsheet (the conditional format rules are written in its locale).
 // -> [{ title, header, rows, keyOf, manual?, frozenColumns, formats }]
 function buildSheet(data, { sep = ',' } = {}) {
-  const { config = {}, infos = [], roster = [], rosterAt = null, match = null, dbMembers = [], departed = { ids: new Set(), keys: new Set() }, week = null, history = [], attendance = null, events = null } = data;
+  const { config = {}, infos = [], roster = [], rosterAt = null, match = null, dbMembers = [], departed = { ids: new Set(), keys: new Set() }, week = null, history = [], matrix = [], attendance = null, events = null } = data;
   const canon = makeCanon(config.classes || []);
   const classText = (c) => (c ? plainClass(canon(c)) : UNKNOWN_CLASS);
   const infoById = new Map(infos.map((i) => [i.id, i]));
@@ -165,15 +180,17 @@ function buildSheet(data, { sep = ',' } = {}) {
   const historyHeader = [...HISTORY_FIXED, ...wars.map((w) => w.label), 'Số lần báo đi', 'Discord ID'];
   const screened = new Set(((attendance && attendance.wars) || []).map((w) => String(w.eventId)));
   const seen = (attendance && attendance.people) || new Map();
-  const mark = (w, id, joinedAt) => {
+  // what one person did in one war -> a key of WAR_STATE / MATRIX_STATE
+  const stateOf = (w, id, joinedAt) => {
     const r = id ? w.regs.get(id) : null;
     const key = String(w.war._id);
     const got = id && screened.has(key) && seen.get(id) ? seen.get(id).byWar.get(key) : undefined;
-    if (got === 'came' || got === 'walkIn') return WAR_STATE.join;
-    if (got === 'noShow') return WAR_STATE.noShow;
-    if (r) return r.status === 'absent' ? WAR_STATE.absent : WAR_STATE.join;
-    return joinedAt && joinedAt > new Date(w.war.startAt) ? WAR_STATE.notYet : WAR_STATE.none;
+    if (got === 'came' || got === 'walkIn') return 'join';
+    if (got === 'noShow') return 'noShow';
+    if (r) return r.status === 'absent' ? 'absent' : 'join';
+    return joinedAt && joinedAt > new Date(w.war.startAt) ? 'notYet' : 'none';
   };
+  const mark = (w, id, joinedAt) => WAR_STATE[stateOf(w, id, joinedAt)];
   // the day a character joined: the roster's day minus its days in the guild (null when unknown)
   const joinedOf = (g) => (rosterAt && Number.isFinite(Number(g.daysInGuild)) ? new Date(new Date(rosterAt).getTime() - (Number(g.daysInGuild) + 1) * DAY_MS) : null);
   const firstWar = columnLetter(HISTORY_FIXED.length + 1);
@@ -185,6 +202,17 @@ function buildSheet(data, { sep = ',' } = {}) {
   });
   const extra = [...new Set(wars.flatMap((w) => [...w.regs.keys()]))].filter((id) => !linkedIds.has(id) && counted(id));
   for (const id of extra) historyRows.push(['', infoById.get(id).name, '', STATUS.noGame, ...wars.map((w) => mark(w, id, infoById.get(id).joinedAt ? new Date(infoById.get(id).joinedAt) : null)), count, id]);
+
+  // ---- BaoDanh ---- (characters of the roster only, one letter per war; a character nobody is linked to has blank cells)
+  const matrixWars = matrix.slice(-MATRIX_WARS).map((h) => ({ war: h.war, label: dayMonth(h.war.startAt), regs: new Map((h.regs || []).map((r) => [r.discordId, r])) }));
+  const matrixHeader = [...MATRIX_FIXED, ...matrixWars.map((w) => w.label), 'Số trận đi'];
+  const firstCell = columnLetter(MATRIX_FIXED.length + 1);
+  const lastCell = columnLetter(MATRIX_FIXED.length + matrixWars.length);
+  const went = matrixWars.length ? fx(`=COUNTIF(${firstCell}{r}:${lastCell}{r},"V")`) : 0;
+  const matrixRows = chars.map((g, i) => {
+    const link = links.get(g.name);
+    return [i + 1, g.name, g.className ? plainClass(g.className) : '', ...matrixWars.map((w) => MATRIX_STATE[stateOf(w, link && link.id, joinedOf(g))]), went];
+  });
 
   // ---- SuKien ----
   let eventRows = null;
@@ -246,10 +274,22 @@ function buildSheet(data, { sep = ',' } = {}) {
         return [...states(sheetId, HISTORY_FIXED.length, HISTORY_FIXED.length + 6), rule(2, [wars6], starts('⏳'), { backgroundColor: YELLOW }), rule(3, [wars6], starts('🆕'), { backgroundColor: color(0.85, 0.9, 1) }), rule(4, [wars6], starts('⚠️'), { backgroundColor: color(1, 0.85, 0.6) })];
       },
     },
+    {
+      title: MATRIX_TAB,
+      header: matrixHeader,
+      rows: matrixRows,
+      keyOf: matrixKey,
+      frozenColumns: 2,
+      formats: (sheetId) => {
+        const cells = cols(sheetId, MATRIX_FIXED.length, MATRIX_FIXED.length + MATRIX_WARS);
+        const is = (text) => ({ type: 'TEXT_EQ', values: [{ userEnteredValue: text }] });
+        return [rule(0, [cells], is('V'), { backgroundColor: GREEN }), rule(1, [cells], is('X'), { backgroundColor: RED })];
+      },
+    },
     ...(eventRows
       ? [{ title: EVENT_TAB, header: EVENT_HEADER, rows: eventRows, keyOf: eventKey, frozenColumns: 1, formats: (sheetId) => [...states(sheetId, 6, 7), rule(2, [cols(sheetId, 6)], starts('❓'), { backgroundColor: YELLOW })] }]
       : []),
   ];
 }
 
-module.exports = { WAR_STATE, MEMBER_TAB, WEEK_TAB, HISTORY_TAB, EVENT_TAB, ALL_TABS, OLD_TABS, tabsText, MEMBER_HEADER, WEEK_HEADER, EVENT_HEADER, HISTORY_FIXED, STATUS, monthStart, buildSheet };
+module.exports = { WAR_STATE, MEMBER_TAB, WEEK_TAB, HISTORY_TAB, MATRIX_TAB, MATRIX_WARS, MATRIX_FIXED, EVENT_TAB, ALL_TABS, OLD_TABS, tabsText, MEMBER_HEADER, WEEK_HEADER, EVENT_HEADER, HISTORY_FIXED, STATUS, monthStart, buildSheet };

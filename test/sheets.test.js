@@ -36,6 +36,7 @@ warService.getLatestEvent = async () => latest;
 linkService.loadMembers = async () => tkMembers;
 let histWars = [];
 warService.listSince = async () => histWars;
+warService.listLastDone = async () => histWars.filter((w) => w.status === 'done');
 gameRosterService.departedOf = async () => ({ ids: new Set(), keys: new Set() });
 let rosterDoc = null;
 gameRosterService.latest = async () => rosterDoc;
@@ -389,7 +390,7 @@ describe('feed.buildSheet', () => {
     ]);
     assert.deepEqual(tv.rows[1].slice(9, 12), ['Có', 'Def', 'Có']);
     assert.ok(!JSON.stringify(tv.rows).includes('Lực'), 'no power anywhere');
-    assert.deepEqual(tabs.map((t) => t.title), [feed.MEMBER_TAB, feed.WEEK_TAB, feed.HISTORY_TAB], 'no SuKien tab without events');
+    assert.deepEqual(tabs.map((t) => t.title), [feed.MEMBER_TAB, feed.WEEK_TAB, feed.HISTORY_TAB, feed.MATRIX_TAB], 'no SuKien tab without events');
   });
 
   it('BangChien_TuanNay: every character with its state and VLOOKUP formulas; registrations of strangers / the departed are left out', () => {
@@ -419,6 +420,29 @@ describe('feed.buildSheet', () => {
     assert.ok(!ls.rows.some((r) => r[7] === sid(3)), 'the stranger is not written');
   });
 
+  it('BaoDanh: one row per character, V / X / blank per finished war (the result screen wins), the last 12 wars, a count formula', () => {
+    const w1 = war(1, 3);
+    const w2 = war(2, 10);
+    const attendance = { wars: [{ eventId: String(w1._id) }], people: new Map([[sid(1), { byWar: new Map([[String(w1._id), 'noShow']]) }]]) };
+    const matrix = [
+      { war: w1, regs: [{ discordId: sid(1), status: 'join' }] },
+      { war: w2, regs: [{ discordId: sid(1), status: 'join' }, { discordId: sid(2), status: 'absent' }] },
+    ];
+    const bd = tab(buildSheet(data({ matrix, attendance })), feed.MATRIX_TAB);
+    assert.deepEqual(bd.header, ['STT', 'Tên game', 'Phái', '03/10', '10/10', 'Số trận đi']);
+    assert.deepEqual(bd.rows.map((r) => r.slice(0, 5)), [
+      [1, 'Người Mới', bd.rows[0][2], '', ''], // not in the guild yet / nobody linked: blank
+      [2, 'An Game', bd.rows[1][2], 'X', 'V'], // registered for the first war but the result screen did not show them
+    ]);
+    assert.deepEqual(bd.rows[1][5], fx('=COUNTIF(D{r}:E{r},"V")'));
+    assert.ok(bd.rows.every((r) => r[1]), 'characters only: no Discord-only rows');
+    const many = Array.from({ length: 15 }, (_, i) => ({ war: war(10 + i, 1 + i), regs: [] }));
+    const wide = tab(buildSheet(data({ matrix: many })), feed.MATRIX_TAB);
+    assert.equal(wide.header.length, feed.MATRIX_FIXED.length + feed.MATRIX_WARS + 1);
+    assert.equal(wide.header[3], '04/10', 'the oldest three are dropped');
+    assert.equal(tab(buildSheet(data()), feed.MATRIX_TAB).rows[0][3], 0, 'no finished war yet: the count is a plain 0');
+  });
+
   it('SuKien: answers of members only, game name when linked (Phái looked up), "(chưa ai trả lời)" for an empty event', () => {
     const ev = (n, title) => ({ _id: oid(n), title, status: 'open', startAt: vn(2026, 10, 25, 20) });
     const events = [
@@ -446,7 +470,7 @@ describe('sheetSync.syncNow', () => {
     rosterDoc = { importedAt: vn(2026, 10, 20, 12), source: 'thanh-vien-bang-2026-10-20.xlsx', members: [{ name: 'An', rank: 'Bang Chúng', className: 'Tố Vấn', daysInGuild: 30, status: '' }] };
     const res = await sheetSync.syncNow(clientOf(people()), GUILD);
     assert.deepEqual(res, { ok: true, members: 2, week: 2, history: 1, kept: 0 }); // An (auto-matched) + Bình (Discord only); Chi is a stranger
-    assert.deepEqual([...fake.sheets.keys()].sort(), ['Của admin', 'ThanhVien', '_LL_ThanhVien', 'BangChien_TuanNay', '_LL_BangChien_TuanNay', 'BangChien_LichSu', '_LL_BangChien_LichSu'].sort());
+    assert.deepEqual([...fake.sheets.keys()].sort(), ['Của admin', 'ThanhVien', '_LL_ThanhVien', 'BangChien_TuanNay', '_LL_BangChien_TuanNay', 'BangChien_LichSu', '_LL_BangChien_LichSu', 'BaoDanh', '_LL_BaoDanh'].sort());
     const tv = fake.sheets.get('ThanhVien').rows;
     assert.deepEqual(tv[0], feed.MEMBER_HEADER);
     assert.deepEqual(tv.slice(1).map((r) => [r[0], r[6], r[7]]), [['An', 'An', sid(1)], ['', 'Bình', sid(2)]]);
