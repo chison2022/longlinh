@@ -13,6 +13,7 @@ const { buildEventPanelFor } = require('./eventPanel');
 const { v2Create, textDisplay } = require('./ui/common');
 const { eventStats, unregisteredCount, roleIsEmpty, completeInfos } = require('./eventStats');
 const { resolveClassStyles } = require('./classStyle');
+const presence = require('./presence');
 const { logEvent } = require('../eventLog');
 
 const IGNORED_CODES = new Set([10003, 10008, 50001]); // Unknown Channel, Unknown Message, Missing Access
@@ -74,6 +75,7 @@ async function refreshEventOnce(client, eventId) {
     guildId = event.guildId;
     if (event.channelId && event.messageId) {
       const [regs, config] = await Promise.all([listRegistrations(event._id), getConfig(event.guildId)]);
+      presence.note(client, event, regs, config || defaultConfig(event.guildId)); // the bot's status line follows the same numbers
       const channel = await client.channels.fetch(event.channelId);
       await channel.messages.edit(event.messageId, warPayload(event, regs, config || defaultConfig(event.guildId), channel.guild));
     }

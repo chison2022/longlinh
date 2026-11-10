@@ -551,9 +551,22 @@ function partyView(g, p, byId) {
   const key = `${g}-${p}`;
   const slots = Array.from({ length: size }, (_, s) => {
     const m = ids[s] ? byId.get(ids[s]) : null;
+    // an empty slot is a keyboard target too (a filled one is reached through its chip): Enter / Space = a tap
+    const keyboard = m
+      ? {}
+      : {
+          role: 'button',
+          tabindex: '0',
+          'aria-label': `Ô trống ${s + 1}, Nhóm ${g + 1} PT ${p + 1}`,
+          onkeydown: (e) => {
+            if (e.key !== 'Enter' && e.key !== ' ') return;
+            e.preventDefault();
+            tapSlot(g, p, s);
+          },
+        };
     return h(
       'div',
-      { class: `slot${m ? ' filled' : ''}`, 'data-zone': 'slot', 'data-g': g, 'data-p': p, 'data-s': s, onclick: (e) => !e.target.closest('.chip') && tapSlot(g, p, s) },
+      { class: `slot${m ? ' filled' : ''}`, 'data-zone': 'slot', 'data-g': g, 'data-p': p, 'data-s': s, onclick: (e) => !e.target.closest('.chip') && tapSlot(g, p, s), ...keyboard },
       m ? chip(m) : h('span', { class: 'plus', 'aria-hidden': 'true' }, '+')
     );
   });
@@ -1104,12 +1117,16 @@ function fatal(text) {
 }
 
 // ---------- boot ----------
+const CONNECT_TIMEOUT_MS = 15000;
+const CONNECT_TIMEOUT_TEXT = 'Discord không phản hồi. Bấm Ctrl+R để tải lại (điện thoại: đóng Bảng xếp đội rồi mở lại).';
+
 async function boot() {
   const config = await (await fetch('/api/config')).json();
   if (!config.clientId) return fatal('Máy chủ chưa cấu hình CLIENT_ID.');
   if (!new URLSearchParams(location.search).has('frame_id')) return fatal('Hãy mở Bảng xếp đội từ trong Discord: vào kênh thoại → Hoạt động (biểu tượng tên lửa) → Tiểu Dao.');
   const sdk = new DiscordSDK(config.clientId);
-  await sdk.ready();
+  // the handshake with the Discord client sometimes never answers (a stale frame): say so instead of "Đang kết nối…" for ever
+  await Promise.race([sdk.ready(), new Promise((_, reject) => setTimeout(() => reject(new Error(CONNECT_TIMEOUT_TEXT)), CONNECT_TIMEOUT_MS))]);
   const { code } = await sdk.commands.authorize({ client_id: config.clientId, response_type: 'code', state: '', prompt: 'none', scope: ['identify', 'guilds.members.read'] });
   const t = await api('/api/token', { method: 'POST', body: JSON.stringify({ code }) });
   if (!t.ok) return fatal(t.body.error || 'Không đăng nhập được.');
