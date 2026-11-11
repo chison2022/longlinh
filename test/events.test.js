@@ -782,7 +782,7 @@ describe('manager actions', () => {
     });
     it('a past start / a deadline after the start / bad people / min above max creates nothing and says why', async () => {
       for (const [values, text] of [
-        [{ time: '12/10 20:00', people: '' }, /Thời gian bắt đầu phải ở tương lai|không hợp lệ/],
+        [{ time: '12/10/2026 20:00', people: '' }, /Thời gian bắt đầu phải ở tương lai|không hợp lệ/],
         [{ time: `${inDays(3)} | hạn ${inDays(4)}` }, /trước hoặc bằng giờ bắt đầu/],
         [{ people: 'nhiều' }, /Số người/],
         [{ people: '20-10' }, /không được lớn hơn/],
