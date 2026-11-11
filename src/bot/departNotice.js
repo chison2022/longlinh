@@ -8,6 +8,7 @@ const { getConfigOrDefault, isOn } = require('../services/guildConfigService');
 const warService = require('../services/warService');
 const { listRegistrations } = require('../services/registrationService');
 const { ensureMembers } = require('./memberCache');
+const { memberInfo } = require('../services/rosterService');
 const { buildDepartNotice, noticeParts, MAX_MERGE } = require('./ui/departNotice');
 const { v2Create } = require('./ui/common');
 const { logEvent } = require('../eventLog');
@@ -31,6 +32,18 @@ async function stillJoined(guildId, departed) {
   } catch (err) {
     console.warn(`[departNotice] guild ${guildId}: registrations unavailable:`, err.message);
     return { war: null, ids: [] };
+  }
+}
+
+// The "probably only another name" hints of an import (departure.mergeHints), with the names the automatic match gives to somebody
+// counted as held. A failed read gives no hints at all: everybody is then listed as departed, like before, and the notice still goes out.
+async function mergeHintsFor(guildId, departed, roster, linked, members) {
+  try {
+    const found = await gameRoster.matchGuild(guildId, [...members.values()].map(memberInfo), roster);
+    return departure.mergeHints(departed, roster.members, linked, departure.autoHeldOf(found && found.match));
+  } catch (err) {
+    console.warn(`[departNotice] guild ${guildId}: no merge hints:`, err.message);
+    return new Map();
   }
 }
 
@@ -83,13 +96,13 @@ async function noticeGuild(client, guildId, { guild = null, config = null } = {}
     const at = new Date();
     // somebody whose name is gone while a roster name nobody holds is nearly the same most likely only has another name: listed apart,
     // and kept away from the unlink / unregister buttons
-    const hints = departure.mergeHints(departed, roster.members, linked);
+    const hints = await mergeHintsFor(guildId, departed, roster, linked, members);
     const gone = departed.filter((d) => !hints.has(d.discordId));
     const maybe = departed.filter((d) => hints.has(d.discordId)).map((d) => ({ id: d.discordId, ...hints.get(d.discordId) }));
     const { war, ids: joined } = await stillJoined(guildId, gone);
     await channel.send(v2Create(buildDepartNotice({ rosterId, importedAt: roster.importedAt, departed: gone, joined, warTitle: war ? war.title : '', maybe })));
     // the unlink button may touch only the people the lines really showed
-    const shown = noticeParts(gone, roster.importedAt, maybe).lines.length;
+    const shown = noticeParts(gone, roster.importedAt, maybe, joined, war ? war.title : '').lines.length;
     await departure.saveNoticeIds(guildId, roster._id, gone.slice(0, shown).map((d) => d.discordId), { more: gone.length - shown, at, joined, warId: war ? war._id : null, merge: maybe.slice(0, MAX_MERGE) }); // like the lines: only the pairs really shown
     logEvent('roster', 'depart_notice', { guild: guildId, rosterId, count, joined: joined.length, maybe: maybe.length, posted: true });
     return { posted: true, count };

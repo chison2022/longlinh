@@ -41,6 +41,7 @@ for (const name of ['findDueLocks', 'lockEvent', 'findDueReminders', 'claimRemin
 }
 // departNotice reads these at call time (module objects).
 gameRosterService.latest = record('latest');
+gameRosterService.loadMappings = async () => new Map(); // the merge hints of the depart notice ask who is matched automatically
 for (const name of ['listNoticeConfigs', 'loadLinked', 'claimNotice', 'saveNoticeIds']) departureService[name] = record(name);
 // the off-notice step is a module object read at call time (the leave service is gone: its calls are never recorded); the off notice has its own tests (offNotice.test.js)
 offNotice.noticeDue = record('offNoticeDue');

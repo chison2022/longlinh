@@ -1,6 +1,6 @@
 // Buttons of the "left the guild in game but still on Discord" notice (see ../departNotice, ../ui/departNotice): adm:depok:<rosterId>
 // (✅ Đã xử lý), adm:depunlink:<rosterId> (🔗 Gỡ liên kết những người này), adm:depreg:<rosterId> (🗑️ Gỡ báo danh) and
-// adm:depmerge:<rosterId> (🔀 Ghép tên mới). All are admin-gated in ./admin before they get here.
+// adm:depmerge:<rosterId> (the 🔀 select: who to link to the roster name). All are admin-gated in ./admin before they get here.
 const gameRoster = require('../../services/gameRosterService');
 const departure = require('../../services/departureService');
 const { ensureMembers, MEMBERS_WARNING } = require('../memberCache');
@@ -10,6 +10,7 @@ const { schedulePanelRefresh, scheduleRefresh } = require('../refresher');
 const warService = require('../../services/warService');
 const regService = require('../../services/registrationService');
 const memberStore = require('../../services/members');
+const { memberInfo } = require('../../services/rosterService');
 const { scheduleSync } = require('../sheetSync');
 const { eph } = require('./common');
 const { logEvent, ixCtx } = require('../../eventLog');
@@ -80,25 +81,33 @@ async function onUnreg(interaction, config, rosterId) {
   return interaction.editReply({ content: lines.join('\n'), allowedMentions: { parse: [] } });
 }
 
-// adm:depmerge:<rosterId> - links the people the notice listed under "🔀 Có thể chỉ khác tên" to the roster name shown next to them.
-// Judged again now: the name must still be in the latest roster with nobody linked to it, and the person must still hold the name the
-// notice showed (anything else was handled by hand since). The in-game ID on the name they leave moves along when the roster
-// character has none.
+// adm:depmerge:<rosterId> (a select; values = Discord ids) - links the people the manager PICKED among those the notice listed under
+// "🔀 Có thể chỉ khác tên" to the roster name shown next to them. Judged again now, against the import the notice was about: the new
+// name must still be in the roster and held by nobody else (a stored link or an automatic match), the old name must still be gone,
+// and the person must still hold the name the notice showed (anything else was handled by hand since). The in-game ID moves along:
+// the character that left gives it back, then the roster character takes it (unless it already has one).
 async function onMerge(interaction, config, rosterId) {
   const guildId = interaction.guildId;
   const notice = await departure.getNotice(guildId);
   if (!notice || notice.rosterId !== rosterId) return interaction.editReply(OLD_NOTICE);
   const latest = await gameRoster.latest(guildId);
   if (!latest) return interaction.editReply('Chưa có danh sách thành viên game.');
+  if (String(latest._id) !== rosterId) return interaction.editReply(OLD_NOTICE); // a newer import: its own notice (or 🎮 Thành viên game) is the place
+  const picked = new Set((interaction.values || []).map(String));
+  const { complete, members } = await ensureMembers(interaction.guild);
+  if (!complete) return interaction.editReply(MEMBERS_WARNING); // the automatic matches cannot be judged with half a member list
   const key = gameRoster.nameKey;
   const linked = await departure.loadLinked(guildId);
+  const found = await gameRoster.matchGuild(guildId, [...members.values()].map(memberInfo), latest);
+  const holder = departure.autoHeldOf(found && found.match);
+  for (const l of linked) holder.set(key(l.gameName), l.discordId);
   const inRoster = new Map(latest.members.map((g) => [key(g.name), g]));
-  const held = new Set(linked.map((l) => key(l.gameName)));
   const nameOf = new Map(linked.map((l) => [l.discordId, l.gameName]));
+  const free = (p) => !holder.has(key(p.name)) || holder.get(key(p.name)) === p.id;
   const pairs = (notice.merge || [])
-    .filter((p) => inRoster.has(key(p.name)) && !held.has(key(p.name)) && nameOf.has(p.id) && key(nameOf.get(p.id)) === key(p.from))
+    .filter((p) => picked.has(String(p.id)) && inRoster.has(key(p.name)) && !inRoster.has(key(p.from)) && free(p) && nameOf.has(p.id) && key(nameOf.get(p.id)) === key(p.from))
     .map((p) => ({ id: p.id, game: inRoster.get(key(p.name)) }));
-  if (!pairs.length) return interaction.editReply('Không còn ai cần ghép (đã ghép trước đó, hoặc tên đó đã có người nhận).');
+  if (!pairs.length) return interaction.editReply('Không còn ai cần ghép trong những người bạn chọn (đã ghép trước đó, hoặc tên đó đã có người nhận).');
   const uids = await departure.linkedUids(guildId, pairs.map((p) => p.id)); // read before the links move
   try {
     await gameRoster.setMappings(guildId, pairs.map((p) => ({ discordId: p.id, gameName: p.game.name })));
@@ -108,12 +117,13 @@ async function onMerge(interaction, config, rosterId) {
   }
   const notes = [];
   for (const p of pairs) {
-    const uid = uids.get(p.id);
-    if (!uid || p.game.gameUid) continue;
-    const res = await gameRoster.setGameUid(guildId, p.game.name, uid);
-    if (res.error) notes.push(`• ID ${uid} chưa chuyển sang **${p.game.name}**: ${res.error}`);
+    const had = uids.get(p.id);
+    if (!had || p.game.gameUid) continue;
+    await departure.releaseDepartedUid(guildId, had.characterId); // the name they left keeps no ID (a typed name is already gone with its row)
+    const res = await gameRoster.setGameUid(guildId, p.game.name, had.uid);
+    if (res.error) notes.push(`• ID ${had.uid} chưa chuyển sang **${p.game.name}**: ${res.error}`);
   }
-  logEvent('roster', 'depart_merge', { ...ixCtx(interaction), rosterId, asked: (notice.merge || []).length, merged: pairs.length, uidNotes: notes.length });
+  logEvent('roster', 'depart_merge', { ...ixCtx(interaction), rosterId, listed: (notice.merge || []).length, picked: picked.size, merged: pairs.length, uidNotes: notes.length });
   scheduleSync(interaction.client, guildId);
   schedulePanelRefresh(interaction.client, guildId);
   const lines = [`✅ Đã ghép ${pairs.length} người sang tên trong danh sách game: ${pairs.map((p) => `<@${p.id}> → **${p.game.name}**`).join(', ')}`, ...notes];

@@ -1,7 +1,8 @@
 // The admin-channel notice "left the guild in game but still on Discord" (pure: no Discord client, no DB). customIds (admin-gated):
 // adm:depok:<rosterId> (✅ Đã xử lý, edits the notice) | adm:depunlink:<rosterId> (🔗 Gỡ liên kết những người này)
-// | adm:depreg:<rosterId> (🗑️ Gỡ báo danh: only when some of them still say "join" for the current war).
-const { ActionRowBuilder, ButtonBuilder, ButtonStyle, ContainerBuilder, escapeMarkdown } = require('discord.js');
+// | adm:depreg:<rosterId> (🗑️ Gỡ báo danh: only when some of them still say "join" for the current war)
+// | adm:depmerge:<rosterId> (a select: 🔀 the people to link to the roster name next to them, picked one by one).
+const { ActionRowBuilder, ButtonBuilder, ButtonStyle, ContainerBuilder, StringSelectMenuBuilder, escapeMarkdown } = require('discord.js');
 const { truncate, textDisplay, separator, v2Payload, V2_TEXT_LIMIT } = require('./common');
 const { discordTs } = require('../../utils/time');
 
@@ -22,7 +23,7 @@ const safeName = (s) => escapeMarkdown(truncate(s, NAME_MAX)).replace(/<(?=[@#])
 const lineOf = (p) => `• <@${p.discordId}> — tên game **${safeName(p.gameName)}** (liên kết: ${SOURCE_TEXT[p.source] || SOURCE_TEXT.admin})`;
 
 const MAX_MERGE = 15;
-const MERGE_HELP = '-# Bấm 🔀 Ghép tên mới nếu đúng là cùng người: liên kết Discord (và ID game) chuyển sang tên trong danh sách. Không thì ghép tay ở 🎮 Thành viên game.';
+const MERGE_HELP = '-# Chọn ở menu 🔀 bên dưới những người ĐÚNG là cùng người: liên kết Discord (và ID game) chuyển sang tên trong danh sách. Ai không chắc thì bỏ qua, ghép tay ở 🎮 Thành viên game.';
 
 // maybe: [{ id, from, name }] people whose linked name is gone but a roster name nobody holds is very close to it.
 // -> the text of that section ('' without anybody).
@@ -33,11 +34,20 @@ function mergeText(maybe) {
   return [`🔀 **Có thể chỉ khác tên** (${maybe.length}) — danh sách game có tên gần giống, chưa ai nhận:`, ...lines, MERGE_HELP].join('\n');
 }
 
-// departed: [{ discordId, gameName, source }]; importedAt: when the roster was imported; maybe: see mergeText (their section shares the budget).
+// The "still registered" section of `joined` ids ('' without anybody).
+function joinedText(joined, warTitle) {
+  if (!joined || !joined.length) return '';
+  const shown = joined.slice(0, MAX_LINES).map((id) => `<@${id}>`).join(', ');
+  const rest = joined.length > MAX_LINES ? ` … +${joined.length - MAX_LINES}` : '';
+  return `⚠️ **Vẫn đang báo danh Tham gia**${warTitle ? ` trận ${safeName(warTitle)}` : ''} (${joined.length}): ${shown}${rest}\n-# Bấm 🗑️ Gỡ báo danh nếu họ thật sự đã rời bang.`;
+}
+
+// departed: [{ discordId, gameName, source }]; importedAt: when the roster was imported; maybe: see mergeText; joined / warTitle: see
+// joinedText. Every section shares the one text budget of the message.
 // -> { subtitle, lines, more }: `lines` = what fits (at most MAX_LINES and the text budget), `more` = how many are left out.
-function noticeParts(departed, importedAt, maybe = []) {
+function noticeParts(departed, importedAt, maybe = [], joined = [], warTitle = '') {
   const subtitle = `Theo danh sách game cập nhật ${discordTs(new Date(importedAt), 'R')} (${departed.length + maybe.length} người).`;
-  let used = TITLE.length + subtitle.length + NOTE.length + 80 + mergeText(maybe).length;
+  let used = TITLE.length + subtitle.length + NOTE.length + 80 + mergeText(maybe).length + joinedText(joined, warTitle).length;
   const lines = [];
   for (const p of departed) {
     const line = lineOf(p);
@@ -51,9 +61,10 @@ function noticeParts(departed, importedAt, maybe = []) {
 const button = (id, label, style = ButtonStyle.Secondary) => new ButtonBuilder().setCustomId(id).setLabel(label).setStyle(style);
 
 // joined: Discord ids of `departed` who still say "join" for the current war (`warTitle`): listed apart, with a 🗑️ Gỡ báo danh button.
-// maybe: the people who probably only have another name (see mergeText): listed apart with a 🔀 Ghép tên mới button, and never among `departed`.
+// maybe: the people who probably only have another name (see mergeText): listed apart with a 🔀 select (one option per person, the
+// manager picks who really is the same person), and never among `departed`.
 function buildDepartNotice({ rosterId, importedAt, departed, joined = [], warTitle = '', maybe = [] }) {
-  const { subtitle, lines, more } = noticeParts(departed, importedAt, maybe);
+  const { subtitle, lines, more } = noticeParts(departed, importedAt, maybe, joined, warTitle);
   const list = more > 0 ? [...lines, `… và ${more} người nữa`] : lines;
   const container = new ContainerBuilder().setAccentColor(ORANGE).addTextDisplayComponents(textDisplay(`${TITLE}\n${subtitle}`));
   const row = new ActionRowBuilder().addComponents(button(`adm:depok:${rosterId}`, '✅ Đã xử lý', ButtonStyle.Success));
@@ -62,13 +73,16 @@ function buildDepartNotice({ rosterId, importedAt, departed, joined = [], warTit
     row.addComponents(button(`adm:depunlink:${rosterId}`, '🔗 Gỡ liên kết những người này'));
   }
   if (maybe.length) {
-    container.addSeparatorComponents(separator()).addTextDisplayComponents(textDisplay(mergeText(maybe)));
-    row.addComponents(button(`adm:depmerge:${rosterId}`, '🔀 Ghép tên mới', ButtonStyle.Primary));
+    const select = new StringSelectMenuBuilder()
+      .setCustomId(`adm:depmerge:${rosterId}`)
+      .setPlaceholder('🔀 Chọn người cần ghép sang tên mới…')
+      .setMinValues(1)
+      .setMaxValues(Math.min(maybe.length, MAX_MERGE))
+      .addOptions(maybe.slice(0, MAX_MERGE).map((p) => ({ label: truncate(`${p.from} → ${p.name}`, 100), value: String(p.id) })));
+    container.addSeparatorComponents(separator()).addTextDisplayComponents(textDisplay(mergeText(maybe))).addActionRowComponents(new ActionRowBuilder().addComponents(select));
   }
   if (joined.length) {
-    const shown = joined.slice(0, MAX_LINES).map((id) => `<@${id}>`).join(', ');
-    const rest = joined.length > MAX_LINES ? ` … +${joined.length - MAX_LINES}` : '';
-    container.addSeparatorComponents(separator()).addTextDisplayComponents(textDisplay(`⚠️ **Vẫn đang báo danh Tham gia**${warTitle ? ` trận ${safeName(warTitle)}` : ''} (${joined.length}): ${shown}${rest}\n-# Bấm 🗑️ Gỡ báo danh nếu họ thật sự đã rời bang.`));
+    container.addSeparatorComponents(separator()).addTextDisplayComponents(textDisplay(joinedText(joined, warTitle)));
     row.addComponents(button(`adm:depreg:${rosterId}`, '🗑️ Gỡ báo danh', ButtonStyle.Danger));
   }
   container.addSeparatorComponents(separator()).addTextDisplayComponents(textDisplay(NOTE)).addActionRowComponents(row);

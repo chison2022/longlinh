@@ -172,7 +172,7 @@ describe('adm:depok / adm:depunlink', () => {
     mock.method(console, 'warn', () => {});
   });
 
-  function interaction({ admin = true, message } = {}) {
+  function interaction({ admin = true, message, values } = {}) {
     const log = [];
     const perms = admin ? MANAGE : NOBODY;
     const guild = { id: GUILD, memberCount: members.size, members: { cache: members, fetch: async () => { if (fetchFails) throw new Error('timeout'); return members; } } };
@@ -182,6 +182,7 @@ describe('adm:depok / adm:depunlink', () => {
       client: {},
       user: { id: sid(900) },
       message,
+      values,
       member: { roles: [], permissions: perms },
       memberPermissions: perms,
       deferReply: async () => log.push(['deferReply']),
@@ -275,30 +276,35 @@ describe('adm:depok / adm:depunlink', () => {
 
   // ---- adm:depmerge ----
   const R3 = { _id: 'c'.repeat(24), importedAt: vn(2026, 10, 10, 12), members: [{ name: 'Kelo' }, { name: 'Bạch Phàm TD' }, { name: 'Teru', gameUid: '12628403502' }] };
+  const BOTH = [sid(2), sid(3)];
   const mergeSetup = () => {
     latest = R3;
     linked = [link(1, 'Kelo'), link(2, 'Bạch Phàm', 'selfFree'), link(3, '12628403502', 'selfFree')];
     notice = { rosterId: R3._id, ids: [], more: 0, at: vn(2026, 10, 10, 12, 30), merge: [{ id: sid(2), from: 'Bạch Phàm', name: 'Bạch Phàm TD' }, { id: sid(3), from: '12628403502', name: 'Teru' }] };
-    const calls = { mappings: [], uids: [] };
+    members = new Collection([1, 2, 3, 9].map((n) => [sid(n), person(n)]));
+    mock.method(gameRoster, 'loadMappings', async () => new Map());
+    const calls = { mappings: [], uids: [], released: [] };
     mock.method(gameRoster, 'setMappings', async (g, pairs) => calls.mappings.push(pairs));
     mock.method(gameRoster, 'setGameUid', async (g, name, uid) => {
       calls.uids.push([name, uid]);
       return { name, uid };
     });
-    mock.method(departure, 'linkedUids', async () => new Map([[sid(2), '2007103503'], [sid(3), '777777']]));
+    mock.method(departure, 'linkedUids', async () => new Map([[sid(2), { uid: '2007103503', characterId: 283 }], [sid(3), { uid: '777777', characterId: 284 }]]));
+    mock.method(departure, 'releaseDepartedUid', async (g, id) => calls.released.push(id));
     return calls;
   };
   it('adm:depmerge: only an admin', async () => {
     const calls = mergeSetup();
-    const { i, log } = interaction({ admin: false });
+    const { i, log } = interaction({ admin: false, values: BOTH });
     await adminHandler.handle(i, ['adm', 'depmerge', R3._id]);
     assert.deepEqual(calls.mappings, []);
     assert.match(last(log, 'editReply'), /không có quyền/);
   });
   it('adm:depmerge: links the listed people to the roster name; the ID they had moves along unless the roster character has one', async () => {
     const calls = mergeSetup();
-    const { i, log } = interaction();
+    const { i, log } = interaction({ values: BOTH });
     await adminHandler.handle(i, ['adm', 'depmerge', R3._id]);
+    assert.deepEqual(calls.released, [283], 'the name they left gives its ID back first');
     assert.deepEqual(calls.mappings, [[{ discordId: sid(2), gameName: 'Bạch Phàm TD' }, { discordId: sid(3), gameName: 'Teru' }]]);
     assert.deepEqual(calls.uids, [['Bạch Phàm TD', '2007103503']], 'Teru already has an ID: left alone');
     const reply = last(log, 'editReply');
@@ -310,7 +316,7 @@ describe('adm:depok / adm:depunlink', () => {
   it('adm:depmerge: a pair handled since (name taken by somebody, or the person holds another name now) is skipped', async () => {
     const calls = mergeSetup();
     linked = [link(1, 'Kelo'), link(2, 'Tên Khác'), link(3, '12628403502', 'selfFree'), link(9, 'Teru')];
-    const { i, log } = interaction();
+    const { i, log } = interaction({ values: BOTH });
     await adminHandler.handle(i, ['adm', 'depmerge', R3._id]);
     assert.deepEqual(calls.mappings, []);
     assert.match(last(log, 'editReply'), /Không còn ai cần ghép/);
@@ -318,14 +324,46 @@ describe('adm:depok / adm:depunlink', () => {
   it('adm:depmerge: an ID that cannot move is reported, the link is still made; an old notice is refused', async () => {
     const calls = mergeSetup();
     mock.method(gameRoster, 'setGameUid', async () => ({ error: 'ID này thuộc nhân vật khác' }));
-    const a = interaction();
+    const a = interaction({ values: BOTH });
     await adminHandler.handle(a.i, ['adm', 'depmerge', R3._id]);
     assert.equal(calls.mappings.length, 1);
     assert.match(last(a.log, 'editReply').content, /ID 2007103503 chưa chuyển sang \*\*Bạch Phàm TD\*\*: ID này thuộc nhân vật khác/);
-    const b = interaction();
+    const b = interaction({ values: BOTH });
     await adminHandler.handle(b.i, ['adm', 'depmerge', R1._id]);
     assert.equal(calls.mappings.length, 1);
     assert.match(last(b.log, 'editReply'), /đã cũ/);
+  });
+  it('adm:depmerge: only the people PICKED in the menu are linked', async () => {
+    const calls = mergeSetup();
+    const { i, log } = interaction({ values: [sid(3)] });
+    await adminHandler.handle(i, ['adm', 'depmerge', R3._id]);
+    assert.deepEqual(calls.mappings, [[{ discordId: sid(3), gameName: 'Teru' }]]);
+    assert.match(last(log, 'editReply').content, /Đã ghép 1 người/);
+  });
+  it('adm:depmerge: a name the automatic match gives to another member is not taken; an old name that is back in the roster is left alone', async () => {
+    const calls = mergeSetup();
+    members = new Collection([[sid(2), person(2)], [sid(3), person(3)], [sid(9), { ...person(9), displayName: 'Bạch Phàm TD' }]]);
+    const a = interaction({ values: [sid(2)] });
+    await adminHandler.handle(a.i, ['adm', 'depmerge', R3._id]);
+    assert.deepEqual(calls.mappings, [], 'member 9 is matched to that name by their Discord name');
+    members = new Collection([1, 2, 3].map((n) => [sid(n), person(n)]));
+    latest = { ...R3, members: [...R3.members, { name: 'Bạch Phàm' }] };
+    const b = interaction({ values: [sid(2)] });
+    await adminHandler.handle(b.i, ['adm', 'depmerge', R3._id]);
+    assert.deepEqual(calls.mappings, [], 'the name the notice called gone is in the roster again');
+  });
+  it('adm:depmerge: a newer import than the notice, or an incomplete member list, changes nothing', async () => {
+    const calls = mergeSetup();
+    latest = { ...R3, _id: 'd'.repeat(24) };
+    const a = interaction({ values: BOTH });
+    await adminHandler.handle(a.i, ['adm', 'depmerge', R3._id]);
+    assert.match(last(a.log, 'editReply'), /đã cũ/);
+    latest = R3;
+    fetchFails = true;
+    const b = interaction({ values: BOTH });
+    await adminHandler.handle(b.i, ['adm', 'depmerge', R3._id]);
+    assert.match(last(b.log, 'editReply'), /Không tải đủ danh sách/);
+    assert.deepEqual(calls.mappings, []);
   });
 });
 
@@ -345,6 +383,14 @@ describe('mergeHints: a "departed" name next to an unclaimed roster name', () =>
     assert.equal(mergeHints([gone(2, 'Bạch Phàm')], roster('Bạch Phàm TD'), [link(2, 'Bạch Phàm'), link(7, 'bach pham td')]).size, 0);
     assert.equal(mergeHints([gone(2, 'Đã Rời Hẳn')], roster('Kelo', 'Người Mới'), [link(2, 'Đã Rời Hẳn')]).size, 0);
     assert.equal(mergeHints([gone(2, 'Lan')], roster('Thanh Lan Hương'), [link(2, 'Lan')]).size, 0, 'a short name inside a long one is not enough');
+    assert.equal(mergeHints([gone(2, 'Ken')], roster('Kenzo1'), [link(2, 'Ken')]).size, 0, 'half of a longer name is not enough either');
+    assert.equal(mergeHints([gone(2, 'Hắc Long')], roster('Hắc Lang'), [link(2, 'Hắc Long')]).size, 0, 'a look-alike is not the same name with something added');
+  });
+  it('a roster name the automatic match gives to somebody else is not offered; to the person themself it is', () => {
+    const auto = new Map([[gameRoster.nameKey('Bạch Phàm TD'), sid(9)]]);
+    assert.equal(mergeHints([gone(2, 'Bạch Phàm')], roster('Bạch Phàm TD'), [link(2, 'Bạch Phàm')], auto).size, 0);
+    const own = new Map([[gameRoster.nameKey('Bạch Phàm TD'), sid(2)]]);
+    assert.equal(mergeHints([gone(2, 'Bạch Phàm')], roster('Bạch Phàm TD'), [link(2, 'Bạch Phàm')], own).size, 1);
   });
   it('one roster name goes to one person only: the closest', () => {
     const hints = mergeHints([gone(2, 'Bạch Phà'), gone(3, 'Bạch Phàm T')], roster('Bạch Phàm TD'), [link(2, 'Bạch Phà'), link(3, 'Bạch Phàm T')]);
@@ -359,6 +405,7 @@ describe('buildDepartNotice with "có thể chỉ khác tên"', () => {
     const text = json(buildDepartNotice({ rosterId: 'abc123', importedAt: vn(2026, 10, 8, 12), departed: [{ discordId: sid(2), gameName: 'Gone1', source: 'admin' }], maybe }));
     assert.ok(text.includes('Có thể chỉ khác tên') && text.includes('Bạch Phàm TD'));
     assert.ok(text.includes('adm:depmerge:abc123') && text.includes('adm:depunlink:abc123'));
+    assert.ok(text.includes('Bạch Phàm → Bạch Phàm TD') && text.includes(sid(7)), 'a select option per person, the Discord id as its value');
     assert.ok(text.includes('(2 người)'));
   });
   it('only such people: no empty list, no unlink button', () => {

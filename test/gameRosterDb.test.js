@@ -459,3 +459,34 @@ describe('IDs typed by a member (game_uid_by)', () => {
     assert.deepEqual(rows.map((r) => [String(r.id) === String(old.id), r.game_uid]), [[true, '77777'], [false, null]]);
   });
 });
+
+describe('the in-game ID follows a person to their new name (the depart notice 🔀 menu)', () => {
+  const uidOf = async (name) => (await db.one('select game_uid from game_characters where guild_id = $1 and name = $2', [G, name])).game_uid;
+  it('a roster character that left gives its ID back, then the new name takes it', async () => {
+    await save([m('Bạch Phàm')], T1);
+    await gr.setMappings(G, [{ discordId: sid(1), gameName: 'Bạch Phàm' }]);
+    await gr.setGameUid(G, 'Bạch Phàm', '2007103503');
+    await save([m('Bạch Phàm TD')], T2); // the old name is gone, its row keeps the ID
+    const had = (await departure.linkedUids(G, [sid(1)])).get(sid(1));
+    assert.equal(had.uid, '2007103503');
+    await gr.setMappings(G, [{ discordId: sid(1), gameName: 'Bạch Phàm TD' }]);
+    assert.match((await gr.setGameUid(G, 'Bạch Phàm TD', had.uid)).error, /đã rời bang/, 'without the release the departed row still holds it');
+    assert.equal(await departure.releaseDepartedUid(G, had.characterId), true);
+    assert.deepEqual(await gr.setGameUid(G, 'Bạch Phàm TD', had.uid), { name: 'Bạch Phàm TD', uid: '2007103503' });
+    assert.equal(await uidOf('Bạch Phàm'), null);
+    assert.equal(await uidOf('Bạch Phàm TD'), '2007103503');
+  });
+  it('an ID is never taken from a character still in the guild, nor from one somebody is linked to', async () => {
+    await save([m('An'), m('Bình')], T1);
+    await gr.setMappings(G, [{ discordId: sid(1), gameName: 'An' }, { discordId: sid(2), gameName: 'Bình' }]);
+    await gr.setGameUid(G, 'An', '11111');
+    await gr.setGameUid(G, 'Bình', '22222');
+    const ids = await departure.linkedUids(G, [sid(1), sid(2), sid(3)]);
+    assert.deepEqual([...ids.keys()].sort(), [sid(1), sid(2)].sort(), 'people without an ID are left out');
+    assert.equal(await departure.releaseDepartedUid(G, ids.get(sid(1)).characterId), false, 'still in the guild');
+    await save([m('An')], T2); // Bình left, but member 2 is still linked to it
+    assert.equal(await departure.releaseDepartedUid(G, ids.get(sid(2)).characterId), false, 'gone, but still somebody\'s character');
+    assert.equal(await uidOf('Bình'), '22222');
+  });
+});
+

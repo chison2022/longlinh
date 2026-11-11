@@ -65,24 +65,45 @@ function findDeparted(linkedMembers, roster, guildMemberIds, { importedAt = null
   return out.sort((a, b) => String(a.displayName || a.gameName).localeCompare(String(b.displayName || b.gameName), 'vi') || (a.discordId < b.discordId ? -1 : 1));
 }
 
-const MERGE_MIN = 0.8; // how alike a "departed" name and an unclaimed roster name must be to say "probably the same person"
+const MERGE_MIN_PART = 0.6; // "probably the same person": one name is inside the other and is at least this much of it
+const MERGE_MIN_LEN = 3;
 
-// People of `departed` whose name is very close to a roster character nobody is linked to: most likely the same person under the
+// How much of the longer name the shorter one is, when the longer contains it (folded names); 0 otherwise. Two names that merely look
+// alike ("Hắc Long" / "Hắc Lang") score 0: only "the same name with something added" counts.
+function partOf(a, b) {
+  const [short, long] = [...a].length <= [...b].length ? [a, b] : [b, a];
+  const n = [...short].length;
+  return n >= MERGE_MIN_LEN && long.includes(short) ? n / [...long].length : 0;
+}
+
+// Roster names the automatic match gives to a Discord member (no stored link, but the rest of the bot treats them as that person's).
+// match: gameRoster.matchGuild(...).match -> Map(nameKey -> discordId)
+function autoHeldOf(match) {
+  return new Map(((match && match.matched) || []).filter((m) => !m.manual && m.game && m.game.name).map((m) => [nameKey(String(m.game.name)), m.discordId]));
+}
+
+// People of `departed` whose name is very close to a roster character nobody else holds: most likely the same person under the
 // name the game really shows ("Bạch Phàm" typed at the gate, "Bạch Phàm TD" in the roster), or who typed their in-game ID as a name.
-// Pure. roster: the member array (or import doc) with { name, gameUid? }; linked: loadLinked() (the names somebody holds).
-// One character per person and one person per character, the closest pairs first. -> Map(discordId -> { from, name })
-function mergeHints(departed, roster, linked) {
+// Pure. roster: the member array (or import doc) with { name, gameUid? }; linked: loadLinked() (the names somebody is linked to);
+// autoHeld: autoHeldOf() (names matched automatically to somebody: only that person may get them).
+// "Very close" = one name inside the other and most of it (partOf; names folded like everywhere else in the bot), never a mere
+// look-alike. One character per person and one person per character, the closest pairs first.
+// -> Map(discordId -> { from, name })
+function mergeHints(departed, roster, linked, autoHeld = new Map()) {
   const members = Array.isArray(roster) ? roster : (roster && roster.members) || [];
-  const held = new Set((linked || []).map((l) => nameKey(String(l.gameName || ''))).filter(Boolean));
-  const free = members.filter((g) => g && g.name && nameKey(String(g.name)) && !held.has(nameKey(String(g.name))));
+  const holder = new Map(autoHeld);
+  for (const l of linked || []) if (nameKey(String(l.gameName || ''))) holder.set(nameKey(String(l.gameName)), l.discordId);
+  const named = members.filter((g) => g && g.name && nameKey(String(g.name)));
   const folded = (name) => gameRoster.fold(cutStem(String(name)));
   const pairs = [];
   for (const d of departed || []) {
     const typed = String(d.gameName || '').trim();
-    for (const g of free) {
+    for (const g of named) {
+      const heldBy = holder.get(nameKey(String(g.name)));
+      if (heldBy && heldBy !== d.discordId) continue;
       const sameId = /^\d{5,20}$/.test(typed) && String(g.gameUid || '') === typed;
-      const score = sameId ? 2 : gameRoster.similarity(folded(typed), folded(g.name));
-      if (score >= MERGE_MIN) pairs.push({ d, g, score });
+      const score = sameId ? 2 : partOf(folded(typed), folded(g.name));
+      if (score > MERGE_MIN_PART) pairs.push({ d, g, score });
     }
   }
   pairs.sort((a, b) => b.score - a.score);
@@ -96,15 +117,26 @@ function mergeHints(departed, roster, linked) {
   return hints;
 }
 
-// The in-game ID on the character each of these people is linked to now -> Map(discordId -> ID). People without one are left out.
+// The in-game ID on the character each of these people is linked to now -> Map(discordId -> { uid, characterId }). People without one are left out.
 async function linkedUids(guildId, discordIds) {
   if (!discordIds || !discordIds.length) return new Map();
   const rows = await db.q(
-    `select m.discord_id, g.game_uid from discord_members m join character_links l on l.member_id = m.id join game_characters g on g.id = l.character_id
+    `select m.discord_id, g.id, g.game_uid from discord_members m join character_links l on l.member_id = m.id join game_characters g on g.id = l.character_id
      where m.guild_id = $1 and m.discord_id = any($2) and g.game_uid is not null`,
     [guildId, discordIds]
   );
-  return new Map(rows.map((r) => [r.discord_id, r.game_uid]));
+  return new Map(rows.map((r) => [r.discord_id, { uid: r.game_uid, characterId: r.id }]));
+}
+
+// A character that left the guild gives its in-game ID back (the person now plays under another name and takes the ID along).
+// Only a character that is gone and that nobody is linked to: an ID in use is never taken. -> true when an ID was cleared
+async function releaseDepartedUid(guildId, characterId) {
+  const rows = await db.q(
+    `update game_characters g set game_uid = null, game_uid_by = null
+     where g.guild_id = $1 and g.id = $2 and g.left_at is not null and not exists (select 1 from character_links l where l.character_id = g.id) returning g.id`,
+    [guildId, characterId]
+  );
+  return rows.length === 1;
 }
 
 // Everybody of the guild with a game name (any source) -> [{ discordId, gameName, source, displayName, gameNameAt }].
@@ -187,4 +219,4 @@ async function listNoticeConfigs() {
   return (await db.q(`select id, settings, created_at, updated_at from guilds where settings->>'adminChannelId' is not null`)).map(rowToConfig);
 }
 
-module.exports = { findDeparted, mergeHints, linkedUids, loadLinked, previousMembers, claimNotice, claimOffNotice, saveNoticeIds, getNotice, listNoticeConfigs, MAX_NOTICE_IDS };
+module.exports = { findDeparted, mergeHints, autoHeldOf, linkedUids, releaseDepartedUid, loadLinked, previousMembers, claimNotice, claimOffNotice, saveNoticeIds, getNotice, listNoticeConfigs, MAX_NOTICE_IDS };
