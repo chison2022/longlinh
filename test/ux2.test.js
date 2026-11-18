@@ -167,7 +167,7 @@ describe('war message class line: "<emoji> <code> <count>"', () => {
   it('💊 TV 1 ... without styles and with the custom emoji; a class without any emoji keeps "• Tên n"', () => {
     const rs = [...makeRegs(1, { classOf: () => 'Tố Vấn' }), ...makeRegs(2, { classOf: () => 'Cửu Linh', offset: 10 })];
     const text = assertV2Message(buildWarMessage(event, rs, CONFIG)).text;
-    assert.match(text, /\S TV 1 {2}\S+ CL 2/);
+    assert.match(text, /\S+ CL 2 {2}\S+ TV 1/); // most players first
     const styles = new Map([['Tố Vấn', { emoji: null, emojiText: '<:tv:123>', color: null, plain: 'Tố Vấn' }]]);
     assert.match(assertV2Message(buildWarMessage(event, rs, CONFIG, styles)).text, /<:tv:123> TV 1/);
     const bare = new Map([['Lạ Quá', { emoji: null, emojiText: '•', color: null, plain: 'Lạ Quá' }]]);

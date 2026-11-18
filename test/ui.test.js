@@ -48,13 +48,14 @@ describe('buildWarMessage (Components V2)', () => {
     assert.ok(v2.buttons.every((b) => !b.disabled));
     assert.ok(!v2.customIds.has(`war:st:${EID}:reserve`), 'no Dự bị button any more');
     assert.match(v2.text, /^### ⚔️ Bang chiến CN 20:00/);
-    assert.match(v2.text, /🟢 Đang mở · chốt <t:\d+:R>/);
-    assert.match(v2.text, /-# Đổi được tới <t:\d+:t> <t:\d+:d>/);
+    assert.match(v2.text, /\n🟢 Đang mở · chốt <t:\d+:t> <t:\d+:d> \(<t:\d+:R>\)/);
+    assert.match(v2.text, /-# Trước giờ chốt đổi Tham gia \/ Vắng thoải mái\./);
+    assert.ok(v2.text.indexOf('🕗') < v2.text.indexOf('🟢'), 'the war time comes before the deadline');
   });
   it('time line: start + warDurationMinutes (default 60)', () => {
     const start = vn(2026, 10, 10, 20, 0);
     const line = (schedule) => assertV2Message(buildWarMessage(makeEvent({ startAt: start }), [], { ...CONFIG, schedule })).text.split('\n').find((l) => l.startsWith('🕗'));
-    assert.equal(line(defaults.schedule), `🕗 <t:${TS(start)}:f> – <t:${TS(vn(2026, 10, 10, 21, 0))}:t>`);
+    assert.equal(line(defaults.schedule), `🕗 Thứ 7 <t:${TS(start)}:d> · <t:${TS(start)}:t> – <t:${TS(vn(2026, 10, 10, 21, 0))}:t>`); // 10/10/2026 is a Saturday
     assert.ok(line(undefined).endsWith(`– <t:${TS(vn(2026, 10, 10, 21, 0))}:t>`), 'no schedule -> default duration');
     assert.ok(line({ warDurationMinutes: 90 }).endsWith(`– <t:${TS(vn(2026, 10, 10, 21, 30))}:t>`));
   });
@@ -91,15 +92,14 @@ describe('buildWarMessage (Components V2)', () => {
     const line = assertV2Message(buildWarMessage(makeEvent(), regs, CONFIG)).text.split('\n').find((l) => /\d/.test(l) && l.includes(EMO(CLASSES[0])));
     assert.equal(line, `${EMO(CLASSES[0])} TY 3  ${EMO(CLASSES[2])} HH 2`); // emoji + initials of the plain name + count
   });
-  it('warns when a role is short of the PTs needed: ceil(join / 6)', () => {
+  it('the public card never shows the "⚠️ Thiếu … PT" warnings (the managers\' panel does)', () => {
     const regs = [
       ...makeRegs(10, { classOf: () => CLASSES[2] }), // 10 -> 2 PT
       ...makeRegs(1, { classOf: () => CLASSES[1], offset: 100 }), // 1 Tố Vấn
       ...makeRegs(2, { classOf: () => CLASSES[0], offset: 200 }), // 2 Thiết Y
     ];
     const text = assertV2Message(buildWarMessage(makeEvent(), regs, CONFIG)).text; // 13 join -> 3 PT
-    assert.match(text, /⚠️ Thiếu Tố Vấn: 1\/3 PT/);
-    assert.match(text, /⚠️ Thiếu Thiết Y: 2\/3 PT/);
+    assert.ok(!text.includes('Thiếu'));
     const enough = assertV2Message(buildWarMessage(makeEvent(), makeRegs(6, { classOf: (i) => CLASSES[i % 2] }), CONFIG)).text; // 1 PT, 3+3
     assert.ok(!enough.includes('Thiếu'));
   });
@@ -113,7 +113,7 @@ describe('buildWarMessage (Components V2)', () => {
     assert.ok(!by(`war:list:${EID}`).disabled);
     assert.ok(!by(`war:tk:${EID}`).disabled, 'links are persistent: allowed after the deadline');
     assert.match(v2.text, /🔒 Đã chốt/);
-    assert.ok(!v2.text.includes('-#'), 'footer only while open');
+    assert.ok(!v2.text.includes('Trước giờ chốt'), 'footer only while open');
   });
   it('status lines and accent colours: open green, locked orange, published blue, done grey', () => {
     const expect = { open: [0x2ecc71, '🟢 Đang mở'], locked: [0xe67e22, '🔒 Đã chốt'], published: [0x3498db, '📢 Đã công bố'], done: [0x95a5a6, '⚫ Đã kết thúc'] };
@@ -152,7 +152,10 @@ describe('buildWarMessage (Components V2)', () => {
     assertV2Message(buildWarMessage(makeEvent(), regs, { classes, groupCount: 2 }, styles));
   });
   it('empty registrations show a placeholder; unknown status still renders', () => {
-    assert.match(assertV2Message(buildWarMessage(makeEvent(), [], CONFIG)).text, /Chưa có ai đăng ký/);
+    const empty = assertV2Message(buildWarMessage(makeEvent(), [], CONFIG)).text;
+    assert.match(empty, /✅ \*\*0\*\*\/\d+ đi · chưa ai đăng ký/);
+    assert.ok(!empty.includes('▱'), 'no all-empty progress bar');
+    assert.match(empty, /-# Số người theo phái hiện ở đây khi có người đăng ký\./);
     assertV2Message(buildWarMessage(makeEvent({ status: 'weird' }), [], CONFIG));
   });
   it('the edit payload clears embeds and the create payload carries neither content nor embeds', () => {

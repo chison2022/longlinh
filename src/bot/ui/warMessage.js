@@ -10,17 +10,17 @@ const {
 const defaults = require('../../../config/defaults');
 const { sameClass, summarize, groupNamesByClass, makeCanon, UNKNOWN_CLASS } = require('../../services/registrationService');
 const { warEnd } = require('../../services/warService');
-const { discordTs } = require('../../utils/time');
+const { discordTs, dayNameOf } = require('../../utils/time');
 const { truncate, packGroups, paginateFields, textDisplay, separator, v2Payload, TK_MARK, TK_LEGEND } = require('./common');
 const { styleOf, optionEmoji, initials, classCodes } = require('../classStyle');
 const { ROLE_OPTIONS, normalizeRole } = require('../../services/missions');
-const { eventStats, progressBar, missingLine } = require('../eventStats');
+const { eventStats, progressBar } = require('../eventStats');
 const { linkButton, parseLineupUrl } = require('./lineupLink');
 const { isOn } = require('../../services/features');
 
 const COLORS = { open: 0x2ecc71, locked: 0xe67e22, published: 0x3498db, done: 0x95a5a6 };
 const STATUS_LINES = {
-  open: (deadline) => `🟢 Đang mở · chốt ${discordTs(deadline, 'R')}`,
+  open: (deadline) => `🟢 Đang mở · chốt ${discordTs(deadline, 't')} ${discordTs(deadline, 'd')} (${discordTs(deadline, 'R')})`,
   locked: () => '🔒 Đã chốt',
   published: () => '📢 Đã công bố',
   done: () => '⚫ Đã kết thúc',
@@ -45,18 +45,20 @@ function buildWarMessage(event, regs, config, styles, { unregistered = null } = 
   const button = (id, label, style, disabled = false) => new ButtonBuilder().setCustomId(id).setLabel(label).setStyle(style).setDisabled(disabled);
   const section = (content, accessory) => new SectionBuilder().addTextDisplayComponents(textDisplay(content)).setButtonAccessory(accessory);
 
-  const joinLine = `✅ **${stats.join}**/${stats.capacity} đi  ${progressBar(stats.join, stats.capacity)}`;
+  // an all-empty bar reads like a rendering fault: before the first ✅ the line says so in words
+  const joinLine = `✅ **${stats.join}**/${stats.capacity} đi${stats.join ? `  ${progressBar(stats.join, stats.capacity)}` : ' · chưa ai đăng ký'}`;
   const absentLine = `❌ ${stats.absent} vắng${stats.unregistered === null ? '' : ` · ⏳ ${stats.unregistered} chưa đăng ký`}`;
   const codes = classCodes(cfg.classes || defaults.classes); // two classes with the same initials get different codes
-  const classLine = stats.byClass.length
-    ? stats.byClass.map((c) => `${classMark(styleOf(styles, c.className), codes)} ${c.count}`).join('  ')
-    : '_Chưa có ai đăng ký._';
-  const info = [classLine, ...stats.missing.map(missingLine)].join('\n');
+  // most players first (stable: equal counts keep the configured class order). The "⚠️ Thiếu … PT" lines are for the managers'
+  // panel only, not this public card.
+  const info = stats.byClass.length
+    ? [...stats.byClass].sort((a, b) => b.count - a.count).map((c) => `${classMark(styleOf(styles, c.className), codes)} ${c.count}`).join('  ')
+    : '-# Số người theo phái hiện ở đây khi có người đăng ký.';
 
   const container = new ContainerBuilder()
     .setAccentColor(COLORS[event.status] ?? COLORS.done)
     .addTextDisplayComponents(
-      textDisplay(`### ⚔️ ${truncate(event.title, 200)}\n${statusLine}\n🕗 ${discordTs(start, 'f')} – ${discordTs(warEnd(start, cfg.schedule), 't')}`)
+      textDisplay(`### ⚔️ ${truncate(event.title, 200)}\n🕗 ${dayNameOf(start)} ${discordTs(start, 'd')} · ${discordTs(start, 't')} – ${discordTs(warEnd(start, cfg.schedule), 't')}\n${statusLine}`)
     )
     .addSeparatorComponents(separator())
     .addSectionComponents(
@@ -74,7 +76,7 @@ function buildWarMessage(event, regs, config, styles, { unregistered = null } = 
         ...((event.status === 'published' || event.status === 'done') && parseLineupUrl(event.lineupUrl) ? [linkButton(parseLineupUrl(event.lineupUrl), '📊 Đội hình')] : [])
       )
     );
-  if (open) container.addTextDisplayComponents(textDisplay(`-# Đổi được tới ${discordTs(deadline, 't')} ${discordTs(deadline, 'd')}`));
+  if (open) container.addTextDisplayComponents(textDisplay('-# Trước giờ chốt đổi Tham gia / Vắng thoải mái.'));
   return v2Payload([container]);
 }
 
@@ -121,7 +123,7 @@ function buildClassSelect(customId, classes, current, styles, { noEmoji = false 
   return new ActionRowBuilder().addComponents(
     new StringSelectMenuBuilder()
       .setCustomId(customId)
-      .setPlaceholder('Chọn môn phái')
+      .setPlaceholder('Chọn phái')
       .addOptions(
         classes.slice(0, 25).map((c) => {
           const st = styleOf(styles, c);

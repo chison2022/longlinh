@@ -296,10 +296,10 @@ describe('war:tk member panel', () => {
     for (const action of ['tk', 'tkpick', 'tkcarry', 'tkclear']) {
       stored = { ...stored, guildId: 'other-guild' };
       const log = await press(action, { values: [sid(2)], users: new Collection(), members: new Collection() });
-      assert.match(last(log).content, /không tồn tại/);
+      assert.match(last(log).content, /Không tìm thấy bang chiến này/);
       assert.deepEqual(members, [], `${action} wrote nothing`);
       warService.getEvent = async () => null;
-      assert.match(last(await press(action, { values: [] })).content, /không tồn tại/);
+      assert.match(last(await press(action, { values: [] })).content, /Không tìm thấy bang chiến này/);
       warService.getEvent = async () => stored;
     }
   });

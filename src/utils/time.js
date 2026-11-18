@@ -7,6 +7,10 @@ const DAY = 24 * HOUR;
 const OFFSET = timezoneOffsetHours * HOUR;
 
 const DAY_NAMES = ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'];
+const DAY_FULL_NAMES = ['Chủ nhật', 'Thứ 2', 'Thứ 3', 'Thứ 4', 'Thứ 5', 'Thứ 6', 'Thứ 7'];
+
+// The Vietnam-time weekday of `date` in words: "Chủ nhật", "Thứ 2".."Thứ 7".
+const dayNameOf = (date) => DAY_FULL_NAMES[toLocalParts(new Date(date)).dow];
 
 function toLocalParts(date) {
   const d = new Date(date.getTime() + OFFSET);
@@ -131,6 +135,7 @@ module.exports = {
   HOUR,
   DAY,
   DAY_NAMES,
+  dayNameOf,
   toLocalParts,
   fromLocal,
   parseTime,

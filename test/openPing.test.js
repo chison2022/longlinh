@@ -32,9 +32,9 @@ describe('openPing', () => {
     assert.equal(sent.length, 1);
     const { content, allowedMentions } = sent[0];
     assert.deepEqual(allowedMentions, { roles: [ROLE] }, 'never everyone or users');
-    assert.ok(content.startsWith(`<@&${ROLE}> 📢 Đã mở báo danh **Bang chiến T7 (07/11)**`));
-    assert.match(content, /<t:\d+:f>/);
-    assert.match(content, /✅ Tham gia \/ ❌ Vắng ở tin nhắn trên trước <t:\d+:R>!/);
+    assert.ok(content.startsWith(`<@&${ROLE}> 📢 Mở báo danh **Bang chiến T7 (07/11)**\n`));
+    assert.match(content, /Bấm ✅ Tham gia hoặc ❌ Vắng ở bài trên, chốt <t:\d+:R>\./);
+    assert.ok(!content.includes('!'), 'no exclamation mark');
     assert.ok(content.includes(`https://discord.com/channels/${G}/chan1/msg1`));
     assert.ok(!/@everyone|@here|<@\d/.test(content));
   });

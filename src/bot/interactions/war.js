@@ -27,22 +27,22 @@ const classLabel = (interaction, config, className) => {
 const roleClassOf = (interaction, config) => regService.classFromRoles(roleNamesOf(interaction), config.classes);
 
 const STATUSES = ['join', 'absent']; // 'Dự bị' is no longer a member choice (old buttons: RESERVE_GONE)
-const RESERVE_GONE = 'Nút Dự bị đã bỏ — bấm ✅ Tham gia hoặc ❌ Vắng.';
-const CLOSED = '🔒 Đã hết hạn đăng ký cho bang chiến này.';
-const NOT_FOUND = 'Bang chiến không tồn tại hoặc đã bị xoá.';
+const RESERVE_GONE = 'Nút này đã cũ. Bấm ✅ Tham gia hoặc ❌ Vắng ở bài bang chiến.';
+const CLOSED = '🔒 Đã hết hạn đăng ký trận này.';
+const NOT_FOUND = 'Không tìm thấy bang chiến này (có thể đã bị xoá).';
 const NOT_PUBLISHED = 'Chưa công bố đội hình.';
 const ENDED = 'Bang chiến đã kết thúc.';
 
 // The confirmation after a click: what was saved and until when it can be changed.
 const recorded = (event, status, label) =>
-  `✅ Đã ghi nhận: **${warService.REG_LABELS[status]}** – ${label}. Đổi được tới ${discordTs(new Date(event.deadlineAt), 'f')}.`;
+  `✅ Đã ghi: **${warService.REG_LABELS[status]}** · ${label}\n-# Đổi được tới ${discordTs(new Date(event.deadlineAt), 't')} ${discordTs(new Date(event.deadlineAt), 'd')}.`;
 
 // After a ✅ Tham gia of a member who has not linked an in-game character: one extra line and a button to the picker (never blocks).
-const GN_NUDGE = '🎮 Bạn chưa chọn nhân vật trong game — chọn để quản lý xếp đội đúng người (không bắt buộc).';
+const GN_NUDGE = '🎮 Chọn nhân vật game của bạn để lead xếp đúng người.\n-# Không bắt buộc.';
 // Skipped for a member who is already matched automatically (game names), and shown at most once per war per member.
 const nudged = new Set(); // `${eventId}:${userId}`
 // A ✅ Tham gia from someone whose linked character left the guild in game is saved, with a warning (the managers decide).
-const leftWarning = (gameName) => `⚠️ Nhân vật **${escapeMarkdown(String(gameName || ''))}** của bạn đã rời bang trong game (theo danh sách game mới nhất). Báo danh vẫn được lưu — nếu đã quay lại bang, báo quản lý cập nhật danh sách.`;
+const leftWarning = (gameName) => `⚠️ **${escapeMarkdown(String(gameName || ''))}** không còn trong danh sách bang ở game. Báo danh vẫn được lưu.\n-# Đã quay lại bang? Báo quản lý cập nhật danh sách.`;
 
 async function withGameNameNudge(interaction, eventId, reply, status, member) {
   if (status === 'join' && member && member.gameLeftAt) {
@@ -114,7 +114,7 @@ async function onStatus(interaction, eventId, status) {
   if (!className) {
     logEvent('war', 'register', { ...ixCtx(interaction), eid: eventId, status, classFrom: 'asked', result: 'asked' });
     return editReplyWithEmojiFallback(interaction, (noEmoji) => ({
-      content: 'Chọn môn phái của bạn (chỉ cần chọn một lần):',
+      content: 'Chọn phái của bạn (chỉ cần chọn một lần):',
       components: [buildClassSelect(`war:cls:${eventId}:${status}`, config.classes, undefined, stylesOf(interaction.guild, config), { noEmoji })],
     }));
   }
@@ -138,9 +138,9 @@ async function onClass(interaction, eventId, status) {
   const config = await getConfigOrDefault(interaction.guildId); // cached
   const roleClass = roleClassOf(interaction, config);
   const className = roleClass || regService.canonicalClass(picked, config.classes); // the role wins over the picked value
-  const note = roleClass && !regService.sameClass(roleClass, picked) ? `Môn phái của bạn lấy theo role **${classLabel(interaction, config, roleClass)}**.\n` : '';
+  const note = roleClass && !regService.sameClass(roleClass, picked) ? `Phái của bạn lấy theo role **${classLabel(interaction, config, roleClass)}**.\n` : '';
   if (!config.classes.includes(className)) {
-    return interaction.editReply({ content: 'Môn phái không còn trong danh sách, hãy thử lại.', components: [] });
+    return interaction.editReply({ content: 'Phái này không còn trong danh sách. Chọn lại.', components: [] });
   }
   const displayName = displayNameOf(interaction);
   // Event read and class save in one round trip: the event is as fresh as it gets right before the registration write.
@@ -153,17 +153,17 @@ async function onClass(interaction, eventId, status) {
   logEvent('war', 'class', { ...ixCtx(interaction), eid: eventId, className, byRole: Boolean(roleClass), change: status === '-', open: Boolean(open) });
   if (status !== '-') {
     if (!event) return interaction.editReply({ content: NOT_FOUND, components: [] });
-    if (!open) return interaction.editReply({ content: `${note}Đã lưu môn phái ${classLabel(interaction, config, className)}.\n${CLOSED}`, components: [] });
+    if (!open) return interaction.editReply({ content: `${note}Đã lưu phái ${classLabel(interaction, config, className)}.\n${CLOSED}`, components: [] });
     if (status === 'reserve') {
       scheduleRefresh(interaction.client, event._id);
-      return interaction.editReply({ content: `${note}Đã lưu môn phái ${classLabel(interaction, config, className)}.
+      return interaction.editReply({ content: `${note}Đã lưu phái ${classLabel(interaction, config, className)}.
 ${RESERVE_GONE}`, components: [] });
     }
     if (!STATUSES.includes(status)) return interaction.editReply({ content: NOT_FOUND, components: [] });
     const registered = await register(interaction, event, status, className);
     logEvent('war', 'register', { ...ixCtx(interaction), eid: eventId, status, classFrom: 'asked', result: registered ? 'ok' : 'closed' });
     if (!registered) {
-      return interaction.editReply({ content: `${note}Đã lưu môn phái ${classLabel(interaction, config, className)}.\n${CLOSED}`, components: [] });
+      return interaction.editReply({ content: `${note}Đã lưu phái ${classLabel(interaction, config, className)}.\n${CLOSED}`, components: [] });
     }
     const done = await withGameNameNudge(interaction, eventId, `${note}${recorded(event, status, classLabel(interaction, config, className))}`, status, memberDoc);
     return interaction.editReply(typeof done === 'string' ? { content: done, components: [] } : done);
@@ -179,10 +179,10 @@ ${RESERVE_GONE}`, components: [] });
     if (mine && mine.status === 'absent') {
       return interaction.editReply({ content: `${note}Đã lưu phái ${classLabel(interaction, config, className)} cho các lần sau. Trận này bạn đã báo vắng.`, components: [] });
     }
-    const kept = mine ? ` — đăng ký trận này giữ nguyên ${mine.className ? classLabel(interaction, config, mine.className) : 'chưa chọn phái'}` : '. Đăng ký trận này đã đóng';
+    const kept = mine ? `. Trận này vẫn giữ ${mine.className ? classLabel(interaction, config, mine.className) : 'chưa chọn phái'}` : '. Đăng ký trận này đã đóng';
     return interaction.editReply({ content: `${note}Đã lưu phái ${classLabel(interaction, config, className)} cho các lần sau${kept}.`, components: [] });
   }
-  return interaction.editReply({ content: `${note}Đã đổi môn phái thành ${classLabel(interaction, config, className)}.`, components: [] });
+  return interaction.editReply({ content: `${note}Đã đổi phái thành ${classLabel(interaction, config, className)}.`, components: [] });
 }
 
 // war:chg:<eid>
@@ -194,10 +194,10 @@ async function onChangeClass(interaction, eventId) {
   ]);
   const roleClass = roleClassOf(interaction, config);
   if (roleClass) {
-    return interaction.editReply(`🎭 Phái của bạn: **${classLabel(interaction, config, roleClass)}** (lấy theo role). Muốn đổi, nhờ quản lý đổi role.`);
+    return interaction.editReply(`🎭 Phái của bạn: **${classLabel(interaction, config, roleClass)}** (lấy theo role).\n-# Muốn đổi thì nhờ quản lý đổi role.`);
   }
   return editReplyWithEmojiFallback(interaction, (noEmoji) => ({
-    content: 'Bạn chưa có role phái. Chọn môn phái của bạn:',
+    content: 'Bạn chưa có role phái. Chọn phái (chỉ cần chọn một lần):',
     components: [buildClassSelect(`war:cls:${eventId}:-`, config.classes, member && member.className, stylesOf(interaction.guild, config), { noEmoji })],
   }));
 }
@@ -210,7 +210,7 @@ async function onMission(interaction, eventId) {
   const current = missions.normalizeRole(member && member.missionPref);
   const closed = warService.canRegister(event, new Date()) ? '' : '\n-# Đăng ký đã đóng: vai trò vẫn được lưu cho các lần sau (tính cho trận này nếu lead chưa xếp đội).';
   return interaction.editReply({
-    content: `🎯 Chọn vai trò của bạn trong bang chiến (lead sẽ xếp theo đây, chưa rõ thì chọn "Không biết — tùy lead sắp xếp").${closed}`,
+    content: `🎯 Chọn vai trò của bạn trong bang chiến. Lead xếp đội theo đây.\n-# Chưa rõ thì chọn "Không biết".${closed}`,
     components: [buildMissionSelect(`war:mispick:${eventId}`, current)],
   });
 }
@@ -219,14 +219,14 @@ async function onMission(interaction, eventId) {
 async function onMissionPick(interaction, eventId) {
   await interaction.deferUpdate();
   const raw = String((interaction.values || [])[0]);
-  if (!missions.isRoleValue(raw)) return interaction.editReply({ content: 'Lựa chọn không hợp lệ, hãy thử lại.', components: [] });
+  if (!missions.isRoleValue(raw)) return interaction.editReply({ content: 'Lựa chọn không hợp lệ. Chọn lại.', components: [] });
   const pick = missions.normalizeRole(raw);
   const [event] = await Promise.all([loadEvent(interaction, eventId), regService.saveMemberMission(interaction.guildId, interaction.user.id, displayNameOf(interaction), pick)]);
   scheduleSync(interaction.client, interaction.guildId); // the role column of the sheet
   logEvent('war', 'mission', { ...ixCtx(interaction), eid: eventId, pick, role: pick, status: event && event.status });
   let note = '';
-  if (event && (event.status === 'published' || event.status === 'done')) note = '\nĐội hình trận này đã công bố nên không đổi; vai trò được lưu cho lần sau.';
-  else if (event && !warService.canRegister(event, new Date())) note = '\nĐăng ký đã đóng: vai trò được lưu cho lần sau (tính cho trận này nếu lead chưa xếp đội).';
+  if (event && (event.status === 'published' || event.status === 'done')) note = '\n-# Đội hình trận này đã công bố nên không đổi. Vai trò được lưu cho lần sau.';
+  else if (event && !warService.canRegister(event, new Date())) note = '\n-# Đăng ký đã đóng: vai trò được lưu cho lần sau (tính cho trận này nếu lead chưa xếp đội).';
   return interaction.editReply({ content: `✅ Đã lưu vai trò: **${missions.roleName(pick)}**.${note}`, components: [] });
 }
 

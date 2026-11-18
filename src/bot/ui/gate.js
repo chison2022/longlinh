@@ -20,7 +20,7 @@ const GREY = 0x95a5a6;
 const ZWSP = '​';
 
 const LABELS = {
-  member: '⚔️ Thành viên bang',
+  member: '⚔️ Xin vào bang',
   send: '📨 Gửi yêu cầu',
   back: '↩ Chọn lại',
   changeClass: '🎭 Đổi phái',
@@ -28,8 +28,8 @@ const LABELS = {
   no: '❌ Từ chối',
   revoke: '↩️ Thu hồi',
   free: '⌨️ Nhập tên nhân vật',
-  guest: '🤝 Khách',
-  guestYes: '✅ Vào làm khách',
+  guest: '🤝 Vào làm khách',
+  guestYes: '✅ Xác nhận',
   guestBack: '↩ Quay lại',
 };
 
@@ -48,10 +48,10 @@ function buildGatePanel({ guildName, autoApprove = true, guest = false }) {
   if (guest) buttons.push(button('gate:gst', LABELS.guest, ButtonStyle.Secondary));
   const container = new ContainerBuilder()
     .setAccentColor(BLUE)
-    .addTextDisplayComponents(textDisplay(`### 👋 Chào mừng đến ${truncate(guildName, 100)}!\nBấm nút bên dưới để xin vào bang.`))
+    .addTextDisplayComponents(textDisplay(`### 👋 Chào mừng đến ${truncate(guildName, 100)}\nBấm nút bên dưới để xin vào bang.`))
     .addActionRowComponents(new ActionRowBuilder().addComponents(...buttons))
-    .addTextDisplayComponents(textDisplay(autoApprove ? '-# Nhập đúng tên nhân vật của bạn: tên có trong danh sách game là vào bang ngay; tên không có trong danh sách thì chờ quản lý duyệt.' : '-# Thành viên bang cần quản lý duyệt trước khi thấy các kênh của bang.'));
-  if (guest) container.addTextDisplayComponents(textDisplay('-# Không chơi trong bang (bạn bè, khách)? Bấm Khách để vào server ngay, không cần duyệt.'));
+    .addTextDisplayComponents(textDisplay(autoApprove ? '-# Nhập đúng tên nhân vật của bạn. Tên có trong danh sách game thì vào bang ngay, không có thì chờ quản lý duyệt.' : '-# Thành viên bang cần quản lý duyệt trước khi thấy các kênh của bang.'));
+  if (guest) container.addTextDisplayComponents(textDisplay('-# Không chơi trong bang (bạn bè, khách)? Bấm 🤝 Vào làm khách để vào server ngay, không cần duyệt.'));
   return v2Payload([container]);
 }
 
@@ -137,7 +137,7 @@ function sendModal(token, classIndex) {
 
 // The member already has a pending request (a second click): its status.
 function buildPendingNotice(request) {
-  const lines = [`⏳ Yêu cầu vào bang của bạn đang **chờ quản lý duyệt** (nhân vật **${safe(request.gameName, 40)}**${request.className ? `, phái ${safe(plainClass(request.className) || request.className, 40)}` : ''}).`, 'Bạn sẽ nhận tin nhắn riêng khi được duyệt.'];
+  const lines = ['⏳ Yêu cầu vào bang đang **chờ quản lý duyệt**', `🎮 **${safe(request.gameName, 40)}**${request.className ? ` · ${safe(plainClass(request.className) || request.className, 40)}` : ''}`, '-# Quản lý duyệt xong, bot sẽ nhắn riêng cho bạn.'];
   return ephemeral(lines.join('\n'));
 }
 
@@ -146,7 +146,7 @@ function buildPendingNotice(request) {
 // Confirm step of 🤝 Khách (ephemeral): the role is given only after ✅ Vào làm khách.
 function buildGuestConfirm() {
   return ephemeral(
-    'Bạn sẽ vào server với vai trò **khách** (không phải thành viên bang). Thành viên bang thì bấm ⚔️ Thành viên bang.',
+    'Bạn sẽ vào server với vai trò **khách** (không phải thành viên bang).\n-# Muốn vào bang thì bấm ⚔️ Xin vào bang.',
     [new ActionRowBuilder().addComponents(button('gate:gyes', LABELS.guestYes, ButtonStyle.Success), button('gate:gback', LABELS.guestBack))]
   );
 }

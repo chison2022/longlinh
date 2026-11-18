@@ -514,11 +514,11 @@ describe('the gate panel', () => {
   it('greets with the server name, has ONE button (no Khách) and the approval hint, and passes the V2 limits', () => {
     const payload = ui.buildGatePanel({ guildName: 'Bang Thử Nghiệm' });
     const v2 = assertV2Message(payload);
-    assert.match(v2.text, /### 👋 Chào mừng đến Bang Thử Nghiệm!\nBấm nút bên dưới để xin vào bang\./);
-    assert.match(v2.text, /-# Nhập đúng tên nhân vật của bạn: tên có trong danh sách game là vào bang ngay/, "auto-approval on by default");
+    assert.match(v2.text, /### 👋 Chào mừng đến Bang Thử Nghiệm\nBấm nút bên dưới để xin vào bang\./);
+    assert.match(v2.text, /-# Nhập đúng tên nhân vật của bạn\. Tên có trong danh sách game thì vào bang ngay/, "auto-approval on by default");
     assert.match(textOf(ui.buildGatePanel({ guildName: "X", autoApprove: false })), /-# Thành viên bang cần quản lý duyệt trước khi thấy các kênh của bang./);
     assert.ok(!/Khách|ghé chơi/.test(v2.text));
-    assert.deepEqual(v2.buttons.map((b) => [b.custom_id, b.label]), [['gate:member', '⚔️ Thành viên bang Bang Thử Nghiệm']]);
+    assert.deepEqual(v2.buttons.map((b) => [b.custom_id, b.label]), [['gate:member', '⚔️ Xin vào bang Bang Thử Nghiệm']]);
     assertV2Message(require('../src/bot/ui/common').v2Create(payload), { forCreate: true });
   });
   it('postOrUpdateGatePanel uses gateGuildName when set, else the server name; posts, edits in place, re-posts when deleted', async () => {
@@ -530,7 +530,7 @@ describe('the gate panel', () => {
     let res = await post(w.client, { ...config, gateGuildName: 'Long Pan' });
     assert.equal(res.action, 'posted');
     assert.match(textOf(w.rec.sent[0][1]), /Chào mừng đến Long Pan/);
-    assert.match(assertV2Message(w.rec.sent[0][1], { forCreate: true }).buttons[0].label, /Thành viên bang Long Pan/);
+    assert.match(assertV2Message(w.rec.sent[0][1], { forCreate: true }).buttons[0].label, /Xin vào bang Long Pan/);
     res = await post(w.client, { ...config, gatePanelChannelId: 'c-gate', gatePanelMessageId: 'msg-1' });
     assert.equal(res.action, 'edited');
     assert.match(textOf(w.rec.edits[0][2]), /Chào mừng đến Bang Thử Nghiệm/);
@@ -546,7 +546,7 @@ describe('the gate panel', () => {
 // ---------- the retired guest path ----------
 
 describe('gate:guest / gate:swguest / gate:tg: the guest path is gone', () => {
-  const GONE = /Lối vào Khách đang tắt/;
+  const GONE = /Lối vào khách đang tắt/;
   it('gate:guest answers ephemerally that it is off, changes no role, even with a legacy guest role configured', async () => {
     config.guestRoleId = 'r-guest';
     config.gateWelcomeGuest = 'Hi khách';
@@ -586,7 +586,7 @@ describe('gate:guest / gate:swguest / gate:tg: the guest path is gone', () => {
     const before = w.rec.roleCalls.length;
     const { i, log } = interactionOf(w, { user: ADMIN, admin: true, message: cardMessageOf(card) });
     await gate.handle(i, ['gate', 'tg', String(request._id)]);
-    assert.match(last(log, 'reply').content, /không còn dùng nữa/);
+    assert.match(last(log, 'reply').content, /Nút này đã cũ/);
     assert.equal(last(log, 'reply').flags, 64);
     assert.equal(reqs[0].status, 'pending');
     assert.equal(w.rec.roleCalls.length, before);
@@ -629,7 +629,7 @@ describe('gate:member', () => {
       const { i, log } = interactionOf(w, { values: ['1'] });
       await gate.handle(i, parts);
       const v = last(log);
-      assert.match(v.content, /Danh sách chọn tên đã bỏ/);
+      assert.match(v.content, /Bước này đã đổi/);
       assert.deepEqual(jsonRows(v).map((r) => r.components.map((c) => c.custom_id)), [['gate:free']]);
     }
     assert.equal(reqs.length, 0);
@@ -652,7 +652,7 @@ describe('gate:member', () => {
     const w = world();
     const { i, log } = interactionOf(w, { values: ['1'] });
     await gate.handle(i, ['gate', 'cls', 'r1-deadbeef']);
-    assert.match(last(log).content, /Danh sách game vừa được cập nhật — nhập lại tên nhân vật/);
+    assert.match(last(log).content, /Danh sách game vừa cập nhật\. Nhập lại tên nhân vật/);
     assert.equal(jsonRows(last(log))[0].components[0].custom_id, 'gate:free');
   });
   it('picking a free name goes through the same checks: a name held by somebody (any spelling) is refused, a typed roster name is that character, a new one is "tự nhập"', async () => {
@@ -1033,7 +1033,7 @@ describe('❌ Từ chối', () => {
     reqs[0].decidedAt = new Date();
     const again = interactionOf(w);
     await gate.handle(again.i, ['gate', 'member']);
-    assert.match(last(again.log).content, /Yêu cầu trước của bạn vừa được xử lý/);
+    assert.match(last(again.log).content, /Yêu cầu trước đã bị từ chối\. Gửi lại được/);
   });
 });
 
@@ -1073,8 +1073,8 @@ describe('🤝 Khách: the self-serve guest path', () => {
 
   it('the panel shows a secondary 🤝 Khách button and the hint only while a guest role is set; without it the panel is unchanged', () => {
     const on = assertV2Message(panelOf(config));
-    assert.deepEqual(on.buttons.map((b) => [b.custom_id, b.label, b.style]), [['gate:member', '⚔️ Thành viên bang Bang Thử Nghiệm', 1], ['gate:gst', '🤝 Khách', 2]]);
-    assert.match(on.text, /-# Không chơi trong bang \(bạn bè, khách\)\? Bấm Khách để vào server ngay, không cần duyệt\./);
+    assert.deepEqual(on.buttons.map((b) => [b.custom_id, b.label, b.style]), [['gate:member', '⚔️ Xin vào bang Bang Thử Nghiệm', 1], ['gate:gst', '🤝 Vào làm khách', 2]]);
+    assert.match(on.text, /-# Không chơi trong bang \(bạn bè, khách\)\? Bấm 🤝 Vào làm khách để vào server ngay, không cần duyệt\./);
     const off = assertV2Message(panelOf({ ...config, guestRoleId: null }));
     assert.deepEqual(off.buttons.map((b) => b.custom_id), ['gate:member']);
     assert.ok(!/Khách/.test(off.text));
@@ -1097,8 +1097,8 @@ describe('🤝 Khách: the self-serve guest path', () => {
     const { log } = await click(w, 'gst');
     assert.equal(log[0][0], 'deferReply');
     const v = assertMessage(last(log));
-    assert.match(last(log).content, /Bạn sẽ vào server với vai trò \*\*khách\*\* \(không phải thành viên bang\)\. Thành viên bang thì bấm ⚔️ Thành viên bang\./);
-    assert.deepEqual(v.rows[0].components.map((c) => [c.custom_id, c.label]), [['gate:gyes', '✅ Vào làm khách'], ['gate:gback', '↩ Quay lại']]);
+    assert.match(last(log).content, /Bạn sẽ vào server với vai trò \*\*khách\*\* \(không phải thành viên bang\)\.\n-# Muốn vào bang thì bấm ⚔️ Xin vào bang\./);
+    assert.deepEqual(v.rows[0].components.map((c) => [c.custom_id, c.label]), [['gate:gyes', '✅ Xác nhận'], ['gate:gback', '↩ Quay lại']]);
     assert.deepEqual(w.rec.roleCalls, []);
     assert.deepEqual(reqs, []);
     const back = await click(w, 'gback');
@@ -1286,7 +1286,7 @@ describe('🤝 Khách: the self-serve guest path', () => {
   it('the retired guest ids still answer "gone" even with a guest role set', async () => {
     const w = world();
     const a = await click(w, 'guest');
-    assert.match(last(a.log).content, /Lối vào Khách đang tắt/);
+    assert.match(last(a.log).content, /Lối vào khách đang tắt/);
     assert.deepEqual(w.rec.roleCalls, []);
   });
   it('the new guest ids are routed through the router and gated by the gate feature', async () => {
@@ -1535,8 +1535,8 @@ describe('M5: gate request flood control', () => {
       const w = world();
       const { i, log } = interactionOf(w);
       await gate.handle(i, ['gate', 'member']);
-      assert.match(last(log).content, /⏳ Yêu cầu trước của bạn vừa được xử lý/, status);
-      assert.match(last(log).content, /<t:\d+:f> \(<t:\d+:R>\)/);
+      assert.match(last(log).content, /⏳ Yêu cầu trước đã (bị từ chối|bị huỷ|chuyển thành Khách)/, status);
+      assert.match(last(log).content, /Gửi lại được <t:\d+:R>\./);
       assert.equal(last(log).components.length, 0, 'no picker');
       const send = interactionOf(w);
       await gate.handle(send.i, ['gate', 'sendModal', `r1-${VER}`, '0']);
@@ -1549,7 +1549,7 @@ describe('M5: gate request flood control', () => {
     reqs = [cooldownReq('rejected', 2, { decidedAt: new Date(decided) })];
     const { i, log } = interactionOf(world());
     await gate.handle(i, ['gate', 'member']);
-    const stamps = [...last(log).content.matchAll(/<t:(\d+):f>/g)].map((m) => Number(m[1]));
+    const stamps = [...last(log).content.matchAll(/<t:(\d+):R>/g)].map((m) => Number(m[1]));
     assert.equal(stamps[0], Math.floor((decided + 12 * HOUR) / 1000));
   });
   it('after 12 h, an approved request, or a card that could not be posted: no cooldown', async () => {
@@ -1854,7 +1854,7 @@ describe('🤖 auto-approval (a roster name) and ↩️ Thu hồi', () => {
     assert.match(v2.text, /Bot tự duyệt/);
     assert.deepEqual(v2.buttons.map((b) => b.custom_id), [`gate:rv:${request._id}`]);
     assert.equal(card.components[0].toJSON().accent_color, 0x2ecc71);
-    assert.match(last(sendLog).content, /Bạn đã vào bang/);
+    assert.match(last(sendLog).content, /🎉 Đã vào bang\./);
     assert.deepEqual(ev('gate.approve').map((e) => [e.by, e.auto, e.member]), [['auto', true, USER]]);
   });
   it('a typed name (not in the roster) still waits for a manager: pending card with ✅ / ❌, no role', async () => {

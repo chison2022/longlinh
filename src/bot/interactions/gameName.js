@@ -11,7 +11,7 @@ const { ensureMembers } = require('../memberCache');
 const { scheduleSync } = require('../sheetSync');
 const { logEvent, ixCtx } = require('../../eventLog');
 
-const ROSTER_CHANGED = 'Danh sách game vừa được cập nhật — chọn lại từ danh sách mới.';
+const ROSTER_CHANGED = 'Danh sách game vừa cập nhật. Mở lại để chọn từ danh sách mới.';
 const LOADING = '⏳ Bot đang tải danh sách thành viên Discord, thử lại sau ít giây.';
 const COOLDOWN_MS = 10 * 1000; // between two changes of the same member's link
 const NOTIFY_MS = 60 * 60 * 1000; // one admin notice per name per hour

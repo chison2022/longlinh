@@ -9,7 +9,7 @@ const { logEvent } = require('../eventLog');
 function buildOpenPing(event, roleId) {
   const link = warService.messageLink(event);
   const title = String(event.title || '').replace(/[*_`~|>]/g, '').slice(0, 100);
-  const content = `<@&${roleId}> 📢 Đã mở báo danh **${title}** (${discordTs(new Date(event.startAt), 'f')}) — vào tick ✅ Tham gia / ❌ Vắng ở tin nhắn trên trước ${discordTs(new Date(event.deadlineAt), 'R')}!${link ? `\n${link}` : ''}`;
+  const content = `<@&${roleId}> 📢 Mở báo danh **${title}**\nBấm ✅ Tham gia hoặc ❌ Vắng ở bài trên, chốt ${discordTs(new Date(event.deadlineAt), 'R')}.${link ? `\n${link}` : ''}`;
   return { content, allowedMentions: { roles: [roleId] } };
 }
 

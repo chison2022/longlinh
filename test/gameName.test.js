@@ -99,7 +99,7 @@ describe('the persistent panel', () => {
   it('has the three buttons with the owner wording, a short explanation, and passes the V2 limits', () => {
     const v2 = assertV2Message(buildGnPanel());
     assert.deepEqual(v2.buttons.map((b) => [b.custom_id, b.label]), [['gn:open', '🎮 Chọn nhân vật của tôi'], ['gn:me', '👤 Xem nhân vật đã liên kết'], ['gn:uid', '🆔 Nhập ID game']]);
-    assert.match(v2.text, /Chọn nhân vật trong game của bạn để quản lý xếp đội đúng người\. Đổi lại lúc nào cũng được\./);
+    assert.match(v2.text, /Cho bot biết bạn là ai trong game: lead xếp đội và điểm danh đúng người\.\n-# Đổi lại lúc nào cũng được\./);
     assert.equal(LABELS.open, '🎮 Chọn nhân vật của tôi');
   });
   it('the setup sub-view: channel select + post button (disabled until a channel is chosen) + back; ≤ 5 rows', () => {
@@ -219,7 +219,7 @@ describe('the ephemeral picker', () => {
     assert.match(last(next.log).content, /trang 3\/3/);
     const stale = interaction();
     await gnHandler.handle(stale.i, ['gn', 'p', '1', 'oldver000']);
-    assert.match(last(stale.log).content, /vừa được cập nhật/);
+    assert.match(last(stale.log).content, /vừa cập nhật/);
   });
   it('without an imported roster only the free-text button is offered', async () => {
     roster = null;
@@ -401,7 +401,7 @@ describe('picking, typing and unlinking', () => {
     const { i, log } = interaction({ extra: { values: ['1'] } });
     await gnHandler.handle(i, ['gn', 'pick', '0', 'oldver000']);
     assert.deepEqual(calls, []);
-    assert.match(last(log).content, /vừa được cập nhật/);
+    assert.match(last(log).content, /vừa cập nhật/);
   });
   it('"Tên tôi không có trong danh sách" opens a modal with a 32-char text input', async () => {
     const { i, log } = interaction();
@@ -484,7 +484,7 @@ describe('the nudge after ✅ Tham gia', () => {
   }
   it('no linked name: the confirmation gets one extra line and a gn:open button (non-blocking)', async () => {
     const reply = await run({ className: 'Tố Vấn' }, 'join');
-    assert.match(reply.content, /Đã ghi nhận[^]*🎮 Bạn chưa chọn nhân vật trong game/);
+    assert.match(reply.content, /Đã ghi[^]*🎮 Chọn nhân vật game của bạn/);
     assert.deepEqual(reply.components.map((r) => r.toJSON().components.map((c) => [c.custom_id, c.label])), [[['gn:open', '🎮 Chọn nhân vật của tôi']]]);
   });
   it('a linked member, or ❌ Vắng, gets the plain confirmation', async () => {

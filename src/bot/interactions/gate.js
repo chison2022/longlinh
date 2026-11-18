@@ -28,14 +28,14 @@ const { logEvent, ixCtx } = require('../../eventLog');
 
 const GATE_OFF = '🚪 Cổng vào đang tắt, hãy nhờ quản lý.';
 const ALREADY_MEMBER = '✅ Bạn đã là thành viên bang.';
-const ROSTER_CHANGED = 'Danh sách game vừa được cập nhật — nhập lại tên nhân vật.';
-const LIST_GONE = 'Danh sách chọn tên đã bỏ — hãy nhập tên nhân vật của bạn.';
+const ROSTER_CHANGED = 'Danh sách game vừa cập nhật. Nhập lại tên nhân vật.';
+const LIST_GONE = 'Bước này đã đổi. Bấm ⌨️ Nhập tên nhân vật để tiếp tục.';
 const LOADING = '⏳ Bot đang tải danh sách thành viên Discord, thử lại sau ít giây.';
 const GUEST_GONE_NOW = '🤝 Nút Khách đang tắt, hãy nhờ quản lý.';
-const GUEST_GONE = '🚶 Lối vào Khách đang tắt — muốn vào bang hãy bấm ⚔️ Thành viên bang ở kênh cổng vào.';
+const GUEST_GONE = '🚶 Lối vào khách đang tắt. Muốn vào bang thì bấm ⚔️ Xin vào bang ở kênh cổng vào.';
 const ALREADY_GUEST = '🤝 Bạn đã là khách của server.';
 const GUEST_DONE = '🤝 Bạn đã vào server với vai trò khách.';
-const TG_GONE = 'Nút “Chuyển thành Khách” không còn dùng nữa — duyệt hoặc từ chối yêu cầu này.';
+const TG_GONE = 'Nút này đã cũ. Bấm ✅ Duyệt hoặc ❌ Từ chối.';
 const STATUS_TEXT = { approved: 'đã được duyệt', rejected: 'đã bị từ chối', guest: 'đã chuyển thành Khách (cũ)', cancelled: 'đã bị huỷ', revoked: 'đã bị thu hồi' };
 
 const fromMessage = (interaction) => typeof interaction.isFromMessage === 'function' && interaction.isFromMessage();
@@ -75,7 +75,7 @@ async function entryBlock(interaction, config) {
   const recent = await gateService.recentDecision(interaction.guildId, interaction.user.id);
   if (recent) {
     const again = new Date(new Date(recent.decidedAt).getTime() + gateService.COOLDOWN_MS);
-    return ui.ephemeral(`⏳ Yêu cầu trước của bạn vừa được xử lý (${STATUS_TEXT[recent.status] || recent.status}). Bạn gửi yêu cầu mới được sau ${discordTs(again, 'f')} (${discordTs(again, 'R')}).`);
+    return ui.ephemeral(`⏳ Yêu cầu trước ${STATUS_TEXT[recent.status] || recent.status}. Gửi lại được ${discordTs(again, 'R')}.`);
   }
   const until = gateService.requestBlockedUntil(interaction.guildId, interaction.user.id);
   if (until) return ui.ephemeral(`⏳ Bạn đã gửi ${gateService.REQUESTS_PER_HOUR} yêu cầu trong 1 giờ qua. Thử lại ${discordTs(new Date(until), 'R')}.`);
@@ -335,7 +335,7 @@ async function onSend(interaction, parts) {
     return interaction.editReply(ui.ephemeral('❌ Không gửi được yêu cầu tới quản lý (bot thiếu quyền ở kênh duyệt). Hãy báo quản lý rồi thử lại.'));
   }
   logEvent('gate', 'request', { ...ixCtx(interaction), rid: String(request._id), gameInRoster: Boolean(choice.entry), free: choice.free, class: canonical, young: cardWarnings({ createdAt: createdAtOf(interaction.user.id), holder: null }).length > 0 });
-  return interaction.editReply(ui.ephemeral(`✅ Đã gửi yêu cầu cho quản lý (nhân vật **${ui.safe(choice.name, 40)}**, phái ${ui.safe(plainClass(canonical) || canonical, 40)}). Bạn sẽ nhận tin nhắn riêng khi được duyệt.`));
+  return interaction.editReply(ui.ephemeral(`✅ Đã gửi yêu cầu vào bang\n🎮 **${ui.safe(choice.name, 40)}** · ${ui.safe(plainClass(canonical) || canonical, 40)}\n-# Quản lý duyệt xong, bot sẽ nhắn riêng cho bạn.`));
 }
 
 // The member is in: the managers' card (best effort: the member is approved either way) + the member's confirmation.
@@ -348,7 +348,7 @@ async function autoApproved(interaction, { request, adminChannelId, texts, notes
     console.error('[gate] cannot post the auto-approved card:', err.message);
     logEvent('gate', 'auto_card_failed', { ...ixCtx(interaction), rid: String(request._id), err, lvl: 'warn' });
   }
-  return interaction.editReply(ui.ephemeral(`🎉 Bạn đã vào bang (nhân vật **${ui.safe(name, 40)}**, phái ${ui.safe(plainClass(className) || className, 40)}). Các kênh của bang đã mở, xem thêm trong tin nhắn riêng của bot.`));
+  return interaction.editReply(ui.ephemeral(`🎉 Đã vào bang.\n🎮 **${ui.safe(name, 40)}** · ${ui.safe(plainClass(className) || className, 40)}\n-# Các kênh của bang đã mở. Hướng dẫn có trong tin nhắn riêng của bot.`));
 }
 
 // ---------- roles ----------
@@ -572,7 +572,7 @@ async function uidClashed(interaction, request, config, clash) {
   const notes = [];
   const member = await fetchMember(interaction.guild, request.discordId);
   if (member) {
-    const told = `Yêu cầu vào bang của bạn chưa được duyệt: ID game **${request.gameUid}** bị trùng. ${clash}\nHãy bấm ⚔️ Thành viên bang ở kênh cổng vào và gửi lại với ID đúng.`;
+    const told = `Yêu cầu vào bang của bạn chưa được duyệt: ID game **${request.gameUid}** bị trùng. ${clash}\nHãy bấm ⚔️ Xin vào bang ở kênh cổng vào và gửi lại với ID đúng.`;
     const dm = await dmMember(member, told);
     if (dm !== true) {
       logEvent('gate', 'dm_failed', { ...ixCtx(interaction), rid: String(request._id), kind: 'uid_clash', err: dm });

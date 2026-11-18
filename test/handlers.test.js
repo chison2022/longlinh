@@ -420,7 +420,7 @@ describe('member registration', () => {
     i.guildId = GUILD;
     await warHandler.handle(i, ['war', 'st', EID, 'join']);
     assert.deepEqual(writes, [['upsert', 'join']]);
-    assert.match(lastReply(log), /Đã ghi nhận/);
+    assert.match(lastReply(log), /Đã ghi:/);
     assert.equal(refreshed.length, 1);
   });
   it('click path: ONE event read, member read in parallel with it, then the write (no duplicate getEvent)', async () => {
@@ -505,7 +505,7 @@ describe('class from Discord role', () => {
     assert.equal(upserts.length, 1);
     assert.equal(upserts[0].className, '🛡️ Thiết Y');
     assert.deepEqual(saves.map((s) => s[3]), ['🛡️ Thiết Y']);
-    assert.match(lastReply(log), /Đã ghi nhận.*Thiết Y/);
+    assert.match(lastReply(log), /Đã ghi:.*Thiết Y/);
   });
   it('role class equal to the saved one -> no extra write', async () => {
     const { i } = interaction(withRoles('Tố Vấn'));
@@ -571,7 +571,7 @@ describe('class from Discord role', () => {
     const { i, log } = interaction(withRoles('Thiết Y'));
     await warHandler.handle(i, ['war', 'st', EID, 'join']);
     assert.equal(upserts.length, 1);
-    assert.match(lastReply(log), /Đã ghi nhận/);
+    assert.match(lastReply(log), /Đã ghi:/);
   });
   it('confirmation replies use the class style (server emoji when matched, else unicode) + plain name', async () => {
     const guild = {
@@ -581,35 +581,35 @@ describe('class from Discord role', () => {
     const { i, log } = interaction({ ...withRoles('Tố Vấn'), guild });
     await warHandler.handle(i, ['war', 'st', EID, 'join']);
     const deadline = Math.floor(new Date(stored.deadlineAt).getTime() / 1000);
-    assert.equal(lastReply(log), `✅ Đã ghi nhận: **Tham gia** – <:tovan:7> Tố Vấn. Đổi được tới <t:${deadline}:f>.`);
+    assert.equal(lastReply(log), `✅ Đã ghi: **Tham gia** · <:tovan:7> Tố Vấn\n-# Đổi được tới <t:${deadline}:t> <t:${deadline}:d>.`);
     const chg = interaction({ ...withRoles('Tố Vấn'), guild });
     await warHandler.handle(chg.i, ['war', 'chg', EID]);
-    assert.equal(lastReply(chg.log), '🎭 Phái của bạn: **<:tovan:7> Tố Vấn** (lấy theo role). Muốn đổi, nhờ quản lý đổi role.');
+    assert.equal(lastReply(chg.log), '🎭 Phái của bạn: **<:tovan:7> Tố Vấn** (lấy theo role).\n-# Muốn đổi thì nhờ quản lý đổi role.');
     const cls = interaction({ ...withRoles('Thành viên'), guild, values: ['🛡️ Thiết Y'] });
     await warHandler.handle(cls.i, ['war', 'cls', EID, '-']);
-    assert.equal(lastReply(cls.log).content, 'Đã đổi môn phái thành 🛡️ Thiết Y.'); // no server emoji matches: unicode fallback
+    assert.equal(lastReply(cls.log).content, 'Đã đổi phái thành 🛡️ Thiết Y.'); // no server emoji matches: unicode fallback
   });
   it('war:chg with a class role -> explanation, no menu', async () => {
     const { i, log } = interaction(withRoles('Tố Vấn'));
     await warHandler.handle(i, ['war', 'chg', EID]);
-    assert.equal(lastReply(log), '🎭 Phái của bạn: **💊 Tố Vấn** (lấy theo role). Muốn đổi, nhờ quản lý đổi role.');
+    assert.equal(lastReply(log), '🎭 Phái của bạn: **💊 Tố Vấn** (lấy theo role).\n-# Muốn đổi thì nhờ quản lý đổi role.');
   });
   it('war:chg without a class role -> menu', async () => {
     const { i, log } = interaction(withRoles('Thành viên'));
     await warHandler.handle(i, ['war', 'chg', EID]);
     assert.equal(lastReply(log).components.length, 1);
-    assert.equal(lastReply(log).content, 'Bạn chưa có role phái. Chọn môn phái của bạn:');
+    assert.equal(lastReply(log).content, 'Bạn chưa có role phái. Chọn phái (chỉ cần chọn một lần):');
   });
   it('Vắng also tells until when it can be changed', async () => {
     const { i, log } = interaction(withRoles('Tố Vấn'));
     await warHandler.handle(i, ['war', 'st', EID, 'absent']);
     assert.equal(upserts[0].status, 'absent');
-    assert.match(lastReply(log), /^✅ Đã ghi nhận: \*\*Vắng\*\* – .*Đổi được tới <t:\d+:f>\.$/);
+    assert.match(lastReply(log), /^✅ Đã ghi: \*\*Vắng\*\* · .*\n-# Đổi được tới <t:\d+:t> <t:\d+:d>\.$/);
   });
   it('legacy "Dự bị" button: ephemeral explanation, nothing saved, the old message is redrawn', async () => {
     const { i, log } = interaction(withRoles('Tố Vấn'));
     await warHandler.handle(i, ['war', 'st', EID, 'reserve']);
-    assert.equal(lastReply(log), 'Nút Dự bị đã bỏ — bấm ✅ Tham gia hoặc ❌ Vắng.');
+    assert.equal(lastReply(log), 'Nút này đã cũ. Bấm ✅ Tham gia hoặc ❌ Vắng ở bài bang chiến.');
     assert.deepEqual(log[0], ['deferReply']);
     assert.deepEqual(upserts, []);
     assert.deepEqual(refreshed.map((r) => r[1]), [EID]);
@@ -618,7 +618,7 @@ describe('class from Discord role', () => {
     const { i, log } = interaction({ ...withRoles('Thành viên'), values: ['🩸 Huyết Hà'] });
     await warHandler.handle(i, ['war', 'cls', EID, 'reserve']);
     assert.deepEqual(upserts, []);
-    assert.match(lastReply(log).content, /Nút Dự bị đã bỏ/);
+    assert.match(lastReply(log).content, /Nút này đã cũ/);
   });
   it('war:cls: the role wins over the picked value and the member is told', async () => {
     const { i, log } = interaction({ ...withRoles('Thiết Y'), values: ['🩸 Huyết Hà'] });
@@ -637,7 +637,7 @@ describe('class from Discord role', () => {
     assert.deepEqual(saves.map((s) => s[3]), ['🩸 Huyết Hà']);
     assert.deepEqual(updates, [], 'the registration is not touched');
     assert.deepEqual(refreshed, [], 'nothing to redraw');
-    assert.equal(lastReply(log).content, 'Đã lưu phái 🩸 Huyết Hà cho các lần sau — đăng ký trận này giữ nguyên 🛡️ Thiết Y.');
+    assert.equal(lastReply(log).content, 'Đã lưu phái 🩸 Huyết Hà cho các lần sau. Trận này vẫn giữ 🛡️ Thiết Y.');
     // not registered for this war at all
     regs = [];
     const none = interaction({ ...withRoles('Thành viên'), values: ['🩸 Huyết Hà'] });

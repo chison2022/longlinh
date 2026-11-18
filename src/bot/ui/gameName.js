@@ -14,7 +14,7 @@ const LABELS = {
   change: '🔄 Đổi nhân vật',
   adminOwned: 'Nhờ quản lý nếu cần đổi',
   title: '### 🎮 Liên kết tên trong game',
-  intro: 'Chọn nhân vật trong game của bạn để quản lý xếp đội đúng người. Đổi lại lúc nào cũng được.',
+  intro: 'Cho bot biết bạn là ai trong game: lead xếp đội và điểm danh đúng người.\n-# Đổi lại lúc nào cũng được.',
   placeholder: 'Chọn nhân vật của bạn trong game…',
 };
 
@@ -90,9 +90,9 @@ function buildPicker({ link = null, ranked = [], page = 0, ver = '0', hasRoster 
   const rows = [];
   let nav = [];
   if (!hasRoster) {
-    lines.push('Quản lý chưa nhập danh sách thành viên game — bạn có thể tự nhập tên nhân vật.');
+    lines.push('Quản lý chưa nhập danh sách thành viên game. Bạn có thể tự nhập tên nhân vật.');
   } else if (!ranked.length) {
-    lines.push('Không còn tên nào trong danh sách game để chọn (đã có người liên kết) — bấm “Tên tôi không có trong danh sách” để nhập tay.');
+    lines.push('Tên nào trong danh sách game cũng đã có người nhận.\n-# Không thấy tên mình? Bấm ✏️ Tên tôi không có trong danh sách để tự nhập.');
   } else {
     const sel = rosterSelect(ranked, page, ver);
     lines.push(sel.line);
