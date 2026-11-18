@@ -389,7 +389,7 @@ describe('war dashboard: no 🎉 Sự kiện button any more', () => {
   it('the last row is ⚙️ Cài đặt, ⚙️ Ngưỡng (the retired ⚖️ / 🎲 stay off even when an old config says on); nothing on the dashboard opens the events', () => {
     const v2 = assertV2Message(buildPanel({ config: { features: { violations: true, draw: true } } }));
     const row = v2.json[0].components.filter((c) => c.type === 1).pop();
-    assert.deepEqual(row.components.map((b) => [b.custom_id, b.label]), [['adm:settings', '⚙️ Cài đặt'], ['adm:offcfg', '⚙️ Ngưỡng']]);
+    assert.deepEqual(row.components.map((b) => [b.custom_id, b.label]), [['adm:settings', '⚙️ Cài đặt'], ['adm:offcfg', '🎚️ Ngưỡng']]);
     assert.ok(!v2.buttons.some((b) => b.custom_id === 'adm:events' || /🎉/.test(b.label)));
   });
 });

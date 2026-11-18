@@ -38,10 +38,13 @@ function sheetLine(sheet) {
 function buildPanel({ event = null, stats = null, game = null, roleEmpty = false, sheet = null, headcount = null, rosterTarget, config = null } = {}) {
   const lines = [];
   if (event && stats) {
-    const deadline = event.status === 'open' ? ` · chốt ${discordTs(new Date(event.deadlineAt), 'R')}` : '';
-    lines.push(`⚔️ **${truncate(event.title, 150)}** · ${STATUS_LABELS[event.status] || event.status}${deadline}`);
+    lines.push(`⚔️ **${truncate(event.title, 150)}** · ${STATUS_LABELS[event.status] || event.status}`);
+    if (event.status === 'open') {
+      const deadline = new Date(event.deadlineAt);
+      lines.push(`⏰ Chốt ${discordTs(deadline, 't')} ${discordTs(deadline, 'd')} (${discordTs(deadline, 'R')})`);
+    }
     lines.push(
-      `✅ ${stats.join}/${stats.capacity} · ❌ ${stats.absent}${stats.unregistered === null ? '' : ` · ⏳ ${stats.unregistered}`}`
+      `✅ **${stats.join}**/${stats.capacity} đi · ❌ ${stats.absent} vắng${stats.unregistered === null ? '' : ` · ⏳ ${stats.unregistered} chưa đăng ký`}`
     );
     lines.push(...stats.missing.map(missingLine));
   } else {
@@ -76,7 +79,7 @@ function buildPanel({ event = null, stats = null, game = null, roleEmpty = false
         button('adm:sheet', '📊 Google Sheet')
       )
     )
-    .addActionRowComponents(new ActionRowBuilder().addComponents(button('adm:settings', '⚙️ Cài đặt'), button('adm:offcfg', '⚙️ Ngưỡng')))
+    .addActionRowComponents(new ActionRowBuilder().addComponents(button('adm:settings', '⚙️ Cài đặt'), button('adm:offcfg', '🎚️ Ngưỡng')))
     .addTextDisplayComponents(textDisplay('-# Chỉ quản lý dùng được các nút này.'));
   return v2Payload([container]);
 }
@@ -100,9 +103,9 @@ function missingPermissions(guild, channel) {
 function channelLine(label, id, guild) {
   if (!id) return `⚠️ ${label}: _chưa chọn_`;
   const channel = guild && guild.channels && guild.channels.cache ? guild.channels.cache.get(id) : null;
-  if (guild && !channel) return `⚠️ ${label}: <#${id}> — bot không thấy kênh này`;
+  if (guild && !channel) return `⚠️ ${label}: <#${id}>. Bot không thấy kênh này.`;
   const missing = missingPermissions(guild, channel);
-  if (missing && missing.length) return `⚠️ ${label}: <#${id}> — bot thiếu quyền: ${missing.join(', ')}`;
+  if (missing && missing.length) return `⚠️ ${label}: <#${id}>. Bot thiếu quyền: ${missing.join(', ')}`;
   return `✅ ${label}: <#${id}>`;
 }
 
@@ -145,7 +148,7 @@ function buildMailSetupView(config, note, ctx = {}) {
   if (inboxId) inbox.setDefaultChannels(inboxId);
   const lines = [
     '**📮 Hòm thư góp ý**',
-    'Thành viên gửi góp ý (có thể ẩn danh) từ bảng này; thư hiện ở kênh nhận thư để quản lý xem và trả lời.',
+    'Thành viên gửi góp ý (có thể ẩn danh) từ bảng này. Thư hiện ở kênh nhận thư để quản lý xem và trả lời.',
     config.mailChannelId ? channelLine('Kênh bảng', config.mailChannelId, ctx.guild) : '⚠️ Kênh bảng: _chưa chọn_',
     inboxId ? channelLine(`Kênh nhận thư${config.mailInboxChannelId ? '' : ' (= kênh admin)'}`, inboxId, ctx.guild) : '⚠️ Kênh nhận thư: _chưa chọn_ (và chưa có kênh admin)',
     ctx.mailReady ? `🔑 Thư ẩn danh: sẵn sàng${ctx.mailFingerprint ? ` · dấu vân tay khoá: \`${ctx.mailFingerprint}\` (so với lúc chạy mail:keygen)` : ''}` : '⚠️ Thư ẩn danh: chưa bật (chưa có config/mailbox-public.pem, chủ bot chạy `npm run mail:keygen`). Gửi kèm tên vẫn dùng được.',
@@ -174,7 +177,7 @@ function buildEventSetupView(config, note, ctx = {}) {
   if (config.eventAdminChannelId) admin.setDefaultChannels(config.eventAdminChannelId);
   const lines = [
     '**🎉 Sự kiện**',
-    'Thẻ sự kiện đăng ở kênh thông báo sự kiện; quản lý tạo / sửa sự kiện bằng bảng cố định ở kênh quản lý sự kiện. Chỉ quản lý dùng được bảng.',
+    'Thẻ sự kiện đăng ở kênh thông báo sự kiện. Quản lý tạo / sửa sự kiện bằng bảng cố định ở kênh quản lý sự kiện. Chỉ quản lý dùng được bảng.',
     cardId ? channelLine(`Kênh thông báo sự kiện${config.eventChannelId ? '' : ' (mặc định: kênh thông báo bang chiến)'}`, cardId, ctx.guild) : '⚠️ Kênh thông báo sự kiện: _chưa chọn_ (và chưa có kênh thông báo bang chiến)',
     adminId ? channelLine(`Kênh quản lý sự kiện${config.eventAdminChannelId ? '' : ' (mặc định: kênh admin)'}`, adminId, ctx.guild) : '⚠️ Kênh quản lý sự kiện: _chưa chọn_ (và chưa có kênh admin)',
     config.eventPanelMessageId ? '✅ Bảng quản lý đã đăng. Bấm nút bên dưới để làm mới (hoặc đăng lại nếu bị xoá).' : 'Chưa đăng bảng quản lý.',
@@ -203,14 +206,17 @@ function buildGateSetupView(config, note, ctx = {}) {
   const admin = new ChannelSelectMenuBuilder().setCustomId('setup:gateadmin').setPlaceholder('Kênh nhận yêu cầu vào bang (mặc định = kênh admin)').setChannelTypes(ChannelType.GuildText);
   if (config.gateAdminChannelId) admin.setDefaultChannels(config.gateAdminChannelId);
   else if (config.adminChannelId) admin.setDefaultChannels(config.adminChannelId);
-  const stranger = new RoleSelectMenuBuilder().setCustomId('setup:gatestranger').setPlaceholder('Role người lạ (gán khi vào server, gỡ khi được duyệt) — để trống = không dùng').setMinValues(0).setMaxValues(1);
+  const stranger = new RoleSelectMenuBuilder().setCustomId('setup:gatestranger').setPlaceholder('Role người lạ (gán khi vào server, gỡ khi được duyệt). Để trống = không dùng').setMinValues(0).setMaxValues(1);
   if (config.strangerRoleId) stranger.setDefaultRoles(config.strangerRoleId);
-  const guest = new RoleSelectMenuBuilder().setCustomId('setup:gateguestrole').setPlaceholder('Role khách (người bấm 🤝 Khách tự nhận) — để trống = không có nút Khách').setMinValues(0).setMaxValues(1);
+  const guest = new RoleSelectMenuBuilder().setCustomId('setup:gateguestrole').setPlaceholder('Role khách (người bấm 🤝 Vào làm khách tự nhận). Để trống = không có nút').setMinValues(0).setMaxValues(1);
   if (config.guestRoleId) guest.setDefaultRoles(config.guestRoleId);
   const lines = [
     '**🚪 Cổng vào người mới**',
-    'Người mới chỉ thấy kênh cổng vào (bạn tự chỉnh quyền kênh, bot không đụng). Bấm ⚔️ Xin vào bang → nhập tên nhân vật: tên có trong danh sách game thì bot tự duyệt (cấp role thành viên + role phái, quản lý nhận thẻ có nút ↩️ Thu hồi); tên tự gõ thì chờ quản lý duyệt.',
-    config.guestRoleId ? `🤝 Nút Khách: **BẬT** (ai bấm cũng tự nhận role <@&${config.guestRoleId}>, không cần duyệt). Bấm 📌 để bảng cổng vào hiện nút.` : '🤝 Nút Khách: **TẮT** (chọn role khách bên dưới để bật)',
+    '• Người mới chỉ thấy kênh cổng vào. Quyền kênh bạn tự chỉnh, bot không đụng.',
+    '• Họ bấm ⚔️ Xin vào bang rồi nhập tên nhân vật.',
+    '• Tên có trong danh sách game: bot tự duyệt, cấp role thành viên + role phái. Quản lý nhận thẻ có nút ↩️ Thu hồi.',
+    '• Tên tự gõ: chờ quản lý duyệt.',
+    config.guestRoleId ? `🤝 Vào làm khách: **BẬT** (ai bấm cũng tự nhận role <@&${config.guestRoleId}>, không cần duyệt). Bấm 📌 để bảng cổng vào hiện nút.` : '🤝 Vào làm khách: **TẮT** (chọn role khách bên dưới để bật)',
     config.gateAutoApprove !== false ? '🤖 Tự duyệt: **BẬT** (tên có trong danh sách game vào ngay)' : '✋ Tự duyệt: **TẮT** (mọi yêu cầu chờ quản lý duyệt)',
     isOn(config, 'gate') ? '🟢 Cổng đang **BẬT**' : '⚪ Cổng đang **TẮT** (bảng vẫn dùng được khi đã đăng, nhưng nút báo cổng đang tắt; bật lại ở 🧩 Tính năng)',
     config.gateChannelId ? channelLine('Kênh cổng vào', config.gateChannelId, ctx.guild) : '⚠️ Kênh cổng vào: _chưa chọn_',
@@ -272,7 +278,7 @@ function buildAdvancedSetupView(config, note) {
   if (isOn(config, 'voiceHang')) row.addComponents(button('setup:voiceview', '🎧 Treo voice'));
   const lines = [
     '**⚙️ Nâng cao**',
-    'Chỉ cần khi muốn kênh riêng cho từng bảng; 📌 Đăng tất cả đã dùng kênh mặc định (kênh thông báo / kênh admin).',
+    'Chỉ cần khi muốn kênh riêng cho từng bảng. 📌 Đăng tất cả đã dùng kênh mặc định (kênh thông báo / kênh admin).',
     'Muốn thêm 📮 / 🎉 / 🚪 / 🎧 ở đây: bật ở 🧩 Tính năng trước.',
   ];
   if (note) lines.push('', note);
@@ -344,7 +350,7 @@ function buildSetupView(config, note, ctx = {}) {
     channelLine('Kênh thông báo', config.announceChannelId, ctx.guild),
     channelLine('Kênh admin', config.adminChannelId, ctx.guild),
     `✅ Role quản lý: ${config.adminRoleIds.length ? config.adminRoleIds.map((id) => `<@&${id}>`).join(' ') : '_chỉ người có quyền Quản lý máy chủ_'}`,
-    ...(botRoles.length ? [`⚠️ Role quản lý là role của bot: ${botRoles.map((id) => `<@&${id}>`).join(' ')} — hãy chọn role gán cho người`] : []),
+    ...(botRoles.length ? [`⚠️ Role quản lý là role của bot: ${botRoles.map((id) => `<@&${id}>`).join(' ')}. Hãy chọn role gán cho người.`] : []),
     config.memberRoleId
       ? ctx.memberCount === 0
         ? `⚠️ Role thành viên chưa có ai: <@&${config.memberRoleId}> (0 người)`

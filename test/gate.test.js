@@ -374,15 +374,15 @@ describe('the /setup 🚪 Cổng vào sub-view and its health checks', () => {
     assert.deepEqual(rows.map((r) => r.components.map((c) => c.custom_id)), [['setup:gatechan'], ['setup:gateadmin'], ['setup:gatestranger'], ['setup:gateguestrole'], ['setup:gatewelcome', 'setup:gateauto', 'setup:gatetoggle', 'setup:gatepost', 'setup:main']]);
     assert.ok(!JSON.stringify(rows).includes('"setup:gateguest"') && !JSON.stringify(rows).includes('gatepending'), 'the retired selects stay retired');
     const guestRow = rows[3].components[0];
-    assert.deepEqual([guestRow.min_values, guestRow.max_values, guestRow.placeholder], [0, 1, 'Role khách (người bấm 🤝 Khách tự nhận) — để trống = không có nút Khách']);
+    assert.deepEqual([guestRow.min_values, guestRow.max_values, guestRow.placeholder], [0, 1, 'Role khách (người bấm 🤝 Vào làm khách tự nhận). Để trống = không có nút']);
     assert.match(v.content, /🟢 Cổng đang \*\*BẬT\*\*/);
     assert.match(v.content, /Ẩn các kênh khác với @everyone \(chỉ kênh welcome cho xem\); role thành viên xem các kênh còn lại\./);
     assert.ok(!/Chờ duyệt/.test(v.content), 'no pending text');
-    assert.match(v.content, /🤝 Nút Khách: \*\*TẮT\*\*/);
+    assert.match(v.content, /🤝 Vào làm khách: \*\*TẮT\*\*/);
     const legacy = buildSetupView({ ...config, pendingRoleId: 'r-pending', gateWelcomeGuest: 'x' }, null, { view: 'gate', guild, health: gateHealth(config, guild) });
     assert.equal(legacy.content, v.content, 'the unused legacy fields change nothing');
     const withGuest = buildSetupView({ ...config, guestRoleId: 'r-guest' }, null, { view: 'gate', guild, health: gateHealth({ ...config, guestRoleId: 'r-guest' }, guild) });
-    assert.match(withGuest.content, /🤝 Nút Khách: \*\*BẬT\*\* .*<@&r-guest>/);
+    assert.match(withGuest.content, /🤝 Vào làm khách: \*\*BẬT\*\* .*<@&r-guest>/);
     assert.match(withGuest.content, /Role \*\*Khách\*\*: <@&r-guest>/);
     assert.deepEqual(assertMessage(withGuest).rows[3].components[0].default_values, [{ id: 'r-guest', type: 'role' }]);
     const off = buildSetupView({ ...config, gateEnabled: false, gateChannelId: null }, null, { view: 'gate', guild });
@@ -795,7 +795,7 @@ describe('gate:member', () => {
     assert.equal(reqs[0].gameNameFree, true);
     const text = textOf(w.rec.sent.at(-1)[1]);
     assert.match(text, /\(tự nhập\)/);
-    assert.match(text, /không có trong danh sách game/);
+    assert.match(text, /⚠️ Không có trong danh sách game/);
     assert.deepEqual(ev('gate.request').map((e) => [e.gameInRoster, e.free]), [[false, true]]);
   });
 });
@@ -807,9 +807,9 @@ describe('the approval card', () => {
     const { card } = await sendRequest({ pick: '0', name: 'Alpha Fan' });
     const v2 = assertV2Message(card, { forCreate: true });
     assert.match(v2.text, /### 🚪 Yêu cầu vào bang/);
-    assert.match(v2.text, new RegExp(`<@${USER}> \\(Discord: \\*\\*Alpha Fan\\*\\*, tài khoản tạo <t:\\d+:R>, vào server <t:\\d+:R>\\)`));
-    assert.match(v2.text, /🎮 Tên game: \*\*Alpha\*\* · ✅ có trong danh sách game mới nhất · cấp bậc Trưởng Lão/);
-    assert.match(v2.text, /🧙 Phái: .*Thiết Y/);
+    assert.match(v2.text, new RegExp(`👤 <@${USER}> · Discord \\*\\*Alpha Fan\\*\\*\n-# Tài khoản tạo <t:\\d+:R> · vào server <t:\\d+:R>`));
+    assert.match(v2.text, /🎮 \*\*Alpha\*\* · .+\n✅ Có trong danh sách game · Trưởng Lão/);
+    assert.match(v2.text, /🎮 \*\*Alpha\*\* · .*Thiết Y/);
     assert.ok(!/⚠️ Tài khoản/.test(v2.text), 'an old account has no warning');
     assert.deepEqual(v2.buttons.map((b) => [b.custom_id, b.label]), [[`gate:ok:${oid(1)}`, '✅ Duyệt'], [`gate:no:${oid(1)}`, '❌ Từ chối']]);
     assert.ok(!v2.text.includes('Khách'));
@@ -823,7 +823,7 @@ describe('the approval card', () => {
     const request = { _id: oid(3), discordId: USER, displayName: 'Z', gameName: 'Tên Lạ', gameNameFree: true, className: 'Thiết Y' };
     const texts = ui.approvalTexts({ request, member: { displayName: 'Z', createdAt: new Date(NOW - 30 * DAY), joinedAt: null }, entry: null, classText: '🛡️ Thiết Y', warnings: ['⚠️ Tên game này đang do <@123> giữ (không nên xảy ra): kiểm tra trước khi duyệt.'] });
     assert.match(texts[0], /\(tự nhập\)/);
-    assert.match(texts[0], /không có trong danh sách game mới nhất/);
+    assert.match(texts[0], /⚠️ Không có trong danh sách game/);
     assert.ok(!/vào server/.test(texts[0]), 'no join time known');
     assert.match(texts[1], /đang do <@123> giữ/);
   });
@@ -1320,7 +1320,7 @@ describe('/setup 🤝 role khách select', () => {
     const view = await pick(w, ['r-guest']);
     assert.deepEqual(writes.pop(), { guestRoleId: 'r-guest' });
     assert.match(view.content, /Đã lưu role khách/);
-    assert.match(view.content, /🤝 Nút Khách: \*\*BẬT\*\*/);
+    assert.match(view.content, /🤝 Vào làm khách: \*\*BẬT\*\*/);
     await pick(w, []);
     assert.deepEqual(writes.pop(), { guestRoleId: null });
     assert.equal(config.guestRoleId, null);
@@ -1707,7 +1707,7 @@ describe('🆔 game ID at the gate (required)', () => {
     const { w } = await sendWith(' 00123456789 ');
     assert.equal(reqs[0].gameUid, '00123456789');
     const card = w.rec.sent.filter((x) => x[0] === 'c-admin').pop()[1];
-    assert.match(assertV2Message(card, { forCreate: true }).text, /🆔 ID game: 00123456789/);
+    assert.match(assertV2Message(card, { forCreate: true }).text, /🆔 00123456789/);
   });
   const CLASH = { status: 'clash', text: 'ID này thuộc nhân vật **Người Đi** (đã rời bang) — có thể là cùng người đổi tên: dùng ✏️ Đổi tên.' };
   it('✅ Duyệt claims the ID for the linked character before anything is decided', async () => {

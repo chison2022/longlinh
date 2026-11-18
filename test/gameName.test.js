@@ -718,6 +718,6 @@ describe('review fixes: names, messages, availability, cooldown', () => {
     const channel = { permissionsFor: () => ({ has: (flag) => flag === PermissionFlagsBits.ViewChannel }) };
     const guild = { channels: { cache: new Map([['123456789012345678', channel]]) }, members: { me: {} } };
     const v = buildSetupView({ ...guildConfigService.defaultConfig(GUILD), gnChannelId: '123456789012345678' }, null, { view: 'gn', guild });
-    assert.match(v.content, /bot thiếu quyền: Gửi tin nhắn/);
+    assert.match(v.content, /Bot thiếu quyền: Gửi tin nhắn/);
   });
 });

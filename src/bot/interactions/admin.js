@@ -360,7 +360,7 @@ async function onSettingsSubmit(interaction, config) {
   );
 }
 
-// adm:offcfgModal - the "⚙️ Ngưỡng" form: days offline before the managers are told (0 = off), and the wanted number
+// adm:offcfgModal - the "🎚️ Ngưỡng" form: days offline before the managers are told (0 = off), and the wanted number
 // of official members (an empty / missing field leaves it as it is: a form opened before that field existed).
 async function onOffWarnSubmit(interaction, config) {
   const raw = String(interaction.fields.getTextInputValue('days') || '').trim();

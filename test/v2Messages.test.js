@@ -241,7 +241,7 @@ describe('dashboard: edit vs post, forgotten ids', () => {
     await refresher.refreshPanelNow(clientOf(), GUILD);
     assert.equal(edits.length, 1);
     const v2 = assertV2Message(edits[0][2]);
-    assert.match(v2.text, /✅ 6\/60 · ❌ 0/);
+    assert.match(v2.text, /✅ \*\*6\*\*\/60 đi · ❌ 0 vắng/);
     assert.match(v2.text, /🎮 Game: 64 người · cập nhật <t:\d+:R>/);
     assert.deepEqual(sent, []);
   });
@@ -439,8 +439,8 @@ describe('refreshes are serialized per message (dirty flag, fresh reads)', () =>
     await Promise.all([a, b, c]);
     assert.equal(state.started.length, 2);
     assert.equal(state.maxRunning, 1);
-    assert.match(textOf(state.started[0][1]), /✅ 6\/60/);
-    assert.match(textOf(state.started[1][1]), /✅ 10\/60/);
+    assert.match(textOf(state.started[0][1]), /✅ \*\*6\*\*\/60 đi/);
+    assert.match(textOf(state.started[1][1]), /✅ \*\*10\*\*\/60 đi/);
   });
   it('different events are independent (no waiting on each other)', async () => {
     const { state, client, tick } = gatedClient();
@@ -582,14 +582,14 @@ describe('/setup view', () => {
     ]);
     const v = buildSetupView(config, undefined, { guild: g });
     assert.match(v.content, /✅ Kênh thông báo: <#war-chan>/);
-    assert.match(v.content, /⚠️ Kênh admin: <#adm-chan> — bot thiếu quyền: Nhúng liên kết, Đính kèm tệp/);
+    assert.match(v.content, /⚠️ Kênh admin: <#adm-chan>\. Bot thiếu quyền: Nhúng liên kết, Đính kèm tệp/);
     assertMessage(v);
   });
   it('lists every missing permission; a channel the bot cannot see is flagged', () => {
     const g = guildWith([['war-chan', chan(new PermissionsBitField(0n))]]);
     const v = buildSetupView({ ...config, adminChannelId: 'ghost' }, undefined, { guild: g });
-    assert.match(v.content, /⚠️ Kênh thông báo: <#war-chan> — bot thiếu quyền: Xem kênh, Gửi tin nhắn, Nhúng liên kết, Đính kèm tệp/);
-    assert.match(v.content, /⚠️ Kênh admin: <#ghost> — bot không thấy kênh này/);
+    assert.match(v.content, /⚠️ Kênh thông báo: <#war-chan>\. Bot thiếu quyền: Xem kênh, Gửi tin nhắn, Nhúng liên kết, Đính kèm tệp/);
+    assert.match(v.content, /⚠️ Kênh admin: <#ghost>\. Bot không thấy kênh này\./);
   });
   it('no channel chosen -> ⚠️ chưa chọn; member role: ⚠️ when missing, ✅ with the member count when known', () => {
     const empty = { ...config, announceChannelId: null, adminChannelId: null, memberRoleId: null };

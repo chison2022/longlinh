@@ -294,7 +294,7 @@ describe('buildPanel (live V2 dashboard)', () => {
     assert.match(v2.text, /-# Chỉ quản lý dùng được các nút này\./);
     assert.deepEqual(idsOf(v2), ['adm:create', 'adm:lock', 'tm:pub', 'adm:unreg', 'adm:game', 'adm:sheet', 'adm:settings', 'adm:offcfg']);
     for (const gone of ['adm:export', 'adm:roster', 'adm:sheetsync']) assert.ok(!idsOf(v2).includes(gone), `${gone} left the dashboard`);
-    assert.deepEqual(v2.json[0].components.filter((c) => c.type === 1).map((r) => r.components.map((b) => b.label)), [['⚔️ Tạo bang chiến', '🔒 Chốt', '📢 Công bố'], ['👥 Chưa đăng ký', '🎮 Thành viên game', '📊 Google Sheet'], ['⚙️ Cài đặt', '⚙️ Ngưỡng']], 'rows of at most 4 buttons (the retired ⚖️ / 🎲 stay off even with an old config)');
+    assert.deepEqual(v2.json[0].components.filter((c) => c.type === 1).map((r) => r.components.map((b) => b.label)), [['⚔️ Tạo bang chiến', '🔒 Chốt', '📢 Công bố'], ['👥 Chưa đăng ký', '🎮 Thành viên game', '📊 Google Sheet'], ['⚙️ Cài đặt', '🎚️ Ngưỡng']], 'rows of at most 4 buttons (the retired ⚖️ / 🎲 stay off even with an old config)');
     assert.match(v2.text, /📊 Sheet: chưa nối/);
     assert.ok(!idsOf(v2).includes('adm:teams'), 'no Chia đội button any more');
     assert.ok(!v2.text.includes('Chia đội') && !v2.text.includes('Tự chia'));
@@ -308,8 +308,8 @@ describe('buildPanel (live V2 dashboard)', () => {
     const event = makeEvent();
     const regs = regsOf(40);
     const v2 = assertV2Message(buildPanel({ event, stats: statsFor(event, regs, { unregistered: 20 }) }));
-    assert.match(v2.text, /⚔️ \*\*Bang chiến CN 20:00 \(11\/10\)\*\* · 🟢 Đang mở đăng ký · chốt <t:\d+:R>/);
-    assert.match(v2.text, /✅ 40\/60 · ❌ 0 · ⏳ 20/);
+    assert.match(v2.text, /⚔️ \*\*Bang chiến CN 20:00 \(11\/10\)\*\* · 🟢 Đang mở đăng ký\n⏰ Chốt <t:\d+:t> <t:\d+:d> \(<t:\d+:R>\)/);
+    assert.match(v2.text, /✅ \*\*40\*\*\/60 đi · ❌ 0 vắng · ⏳ 20 chưa đăng ký/);
     const lock = v2.buttons.find((b) => b.custom_id === 'adm:lock');
     assert.equal(lock.label, '🔒 Chốt');
     assert.ok(!lock.disabled);

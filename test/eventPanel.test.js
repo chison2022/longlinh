@@ -123,10 +123,10 @@ describe('the /setup 🎉 Sự kiện sub-view', () => {
   });
   it('permission checks like the other views: a channel the bot cannot see / lacks rights in', () => {
     const guild = { channels: { cache: new Collection() }, members: { me: {} } };
-    assert.match(view({ ...config, eventChannelId: 'ev-chan' }, { guild }).content, /⚠️ Kênh thông báo sự kiện: <#ev-chan> — bot không thấy kênh này/);
+    assert.match(view({ ...config, eventChannelId: 'ev-chan' }, { guild }).content, /⚠️ Kênh thông báo sự kiện: <#ev-chan>\. Bot không thấy kênh này\./);
     const noSend = { permissionsFor: () => ({ has: (flag) => flag !== PermissionFlagsBits.SendMessages }) };
     guild.channels.cache.set('ev-adm', noSend);
-    assert.match(view({ ...config, eventAdminChannelId: 'ev-adm' }, { guild }).content, /⚠️ Kênh quản lý sự kiện: <#ev-adm> — bot thiếu quyền: Gửi tin nhắn/);
+    assert.match(view({ ...config, eventAdminChannelId: 'ev-adm' }, { guild }).content, /⚠️ Kênh quản lý sự kiện: <#ev-adm>\. Bot thiếu quyền: Gửi tin nhắn/);
   });
 });
 

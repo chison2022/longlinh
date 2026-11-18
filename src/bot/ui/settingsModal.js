@@ -130,7 +130,7 @@ function buildExtendModal(event) {
     );
 }
 
-// The "⚙️ Ngưỡng" form (adm:offcfgModal): after each game roster import the managers are told who has been offline this many days or more;
+// The "🎚️ Ngưỡng" form (adm:offcfgModal): after each game roster import the managers are told who has been offline this many days or more;
 // the second field is the wanted number of official members (the dashboard says to recruit below it).
 function buildOffWarnModal(config) {
   const current = config && Number.isInteger(config.offWarnDays) ? config.offWarnDays : 5;

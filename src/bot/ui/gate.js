@@ -176,15 +176,17 @@ function cardPayload({ texts, accent, requestId = null, buttons = false }) {
 // info: { member: { id, displayName, createdAt: Date, joinedAt: Date|null }, game: { entry|null }, classText, warnings: [string] }
 // request: the GateRequest. -> the texts of the card (also what the decided card is rebuilt from).
 function approvalTexts({ request, member, entry = null, classText, warnings = [] }) {
-  const who = [`Discord: **${safe(member.displayName || request.displayName, 40)}**`, `tài khoản tạo ${discordTs(member.createdAt, 'R')}`];
-  if (member.joinedAt) who.push(`vào server ${discordTs(member.joinedAt, 'R')}`);
-  const game = [`🎮 Tên game: **${safe(request.gameName, 40)}**${request.gameNameFree ? ' (tự nhập)' : ''}`];
-  if (entry) {
-    game.push(`✅ có trong danh sách game mới nhất${entry.rank ? ` · cấp bậc ${safe(entry.rank, 30)}` : ''}`);
-  } else {
-    game.push('⚠️ không có trong danh sách game mới nhất');
-  }
-  const main = ['### 🚪 Yêu cầu vào bang', `<@${request.discordId}> (${who.join(', ')})`, game.join(' · '), `🧙 Phái: ${classText}`, ...(request.gameUid ? [`🆔 ID game: ${request.gameUid}`] : [])].join('\n');
+  const ages = [`Tài khoản tạo ${discordTs(member.createdAt, 'R')}`];
+  if (member.joinedAt) ages.push(`vào server ${discordTs(member.joinedAt, 'R')}`);
+  const character = [`🎮 **${safe(request.gameName, 40)}**${request.gameNameFree ? ' (tự nhập)' : ''}`, classText, ...(request.gameUid ? [`🆔 ${request.gameUid}`] : [])];
+  const inRoster = entry ? `✅ Có trong danh sách game${entry.rank ? ` · ${safe(entry.rank, 30)}` : ''}` : '⚠️ Không có trong danh sách game';
+  const main = [
+    '### 🚪 Yêu cầu vào bang',
+    `👤 <@${request.discordId}> · Discord **${safe(member.displayName || request.displayName, 40)}**`,
+    `-# ${ages.join(' · ')}`,
+    character.join(' · '),
+    inRoster,
+  ].join('\n');
   const out = [main];
   if (warnings.length) out.push(warnings.join('\n'));
   return out;
@@ -207,7 +209,7 @@ function buildAlertCard({ texts, requestId, alert }) {
   return cardPayload({ texts: [...texts.filter((t) => !t.startsWith(ALERT_PREFIX)), `${ALERT_PREFIX}${alert}`], accent: ORANGE, requestId, buttons: true });
 }
 
-const AUTO_LINE = (at) => `🤖 Bot tự duyệt ${discordTs(at, 'R')} (tên có trong danh sách game, chưa ai giữ). Sai người thì bấm ${LABELS.revoke}.`;
+const AUTO_LINE = (at) => `🤖 Bot tự duyệt ${discordTs(at, 'R')}.\n-# Tên có trong danh sách game và chưa ai giữ. Sai người thì bấm ${LABELS.revoke}.`;
 
 // A roster name was approved by the bot itself: green, the notes, one admin button to take it back.
 function buildAutoApprovedCard({ texts, requestId, at = new Date(), notes = [] }) {

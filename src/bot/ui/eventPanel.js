@@ -2,7 +2,7 @@
 // bot/refresher.js. customIds (the `ev` prefix, manager gate in ../interactions/events): ev:pnew (opens the create form) | ev:pmanage (the ephemeral
 // 📅 manager view). Pure: no Discord client, no DB.
 const { ActionRowBuilder, ButtonBuilder, ButtonStyle, ContainerBuilder } = require('discord.js');
-const { discordTs } = require('../../utils/time');
+const { discordTs, dayNameOf } = require('../../utils/time');
 const { truncate, textDisplay, v2Payload } = require('./common');
 const eventService = require('../../services/eventService');
 const { esc } = require('./eventCard');
@@ -19,7 +19,7 @@ function panelLine(event, counts) {
   const title = truncate(esc(event.title), 60);
   const cap = event.capacity ? `/${event.capacity}` : '';
   const short = eventService.shortfallOf(event, c) ? ` · ⚠️ cần ${event.minParticipants}` : '';
-  return `${eventService.categoryOf(event).emoji} ${link ? `[${title}](${link})` : title} · ${discordTs(new Date(event.startAt), 'f')} · ${eventService.STATUS_LABELS[event.status] || event.status} · ✅ ${c.yes}${cap}${short}`;
+  return `${eventService.categoryOf(event).emoji} ${link ? `[${title}](${link})` : title} · ${dayNameOf(event.startAt)} ${discordTs(new Date(event.startAt), 'd')} ${discordTs(new Date(event.startAt), 't')} · ${eventService.STATUS_LABELS[event.status] || event.status} · ✅ ${c.yes}${cap}${short}`;
 }
 
 // `events` = open / locked events (soonest first), `counts` = Map eventId -> { yes, maybe, no }. For channel.send (v2Create) or an edit.
