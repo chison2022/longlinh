@@ -44,13 +44,13 @@ const WIDTHS = [700, 2600, 2600, 1500, 1900];
 async function buildEventDocx({ event, replies = [], gameNames = new Map(), classOf = () => '', category = null, statusLabel = '', guildName = '', now = new Date() }) {
   const body = [];
   body.push(para(run(event.title, { bold: true, size: 36 }), { spacingAfter: 200 }));
-  const when = `${formatLocalDateTime(new Date(event.startAt))}${event.endAt ? ` – ${formatLocalDateTime(new Date(event.endAt)).split(' ').pop()}` : ''}`;
+  const when = !event.startAt ? 'Chưa có giờ' : `${formatLocalDateTime(new Date(event.startAt))}${event.endAt ? ` – ${formatLocalDateTime(new Date(event.endAt)).split(' ').pop()}` : ''}`;
   const yes = replies.filter((r) => r.status === 'yes').length;
   const facts = [
     ['Bang', guildName],
     ['Loại', category ? category.label : ''],
-    ['Thời gian', `${when} (giờ Việt Nam)`],
-    ['Hạn trả lời', formatLocalDateTime(new Date(event.deadlineAt))],
+    ['Thời gian', event.startAt ? `${when} (giờ Việt Nam)` : when],
+    ['Hạn trả lời', event.deadlineAt ? formatLocalDateTime(new Date(event.deadlineAt)) : ''],
     ['Trạng thái', statusLabel],
     ['Số người', `${yes}${event.capacity ? `/${event.capacity}` : ''} tham gia${event.minParticipants ? ` · cần ít nhất ${event.minParticipants}${yes < event.minParticipants ? ` (còn thiếu ${event.minParticipants - yes})` : ''}` : ''}`],
   ].filter(([, v]) => v);
@@ -81,7 +81,7 @@ async function buildEventDocx({ event, replies = [], gameNames = new Map(), clas
   zip.file('_rels/.rels', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>');
   zip.file('word/document.xml', document);
   const buffer = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
-  const day = formatLocalDateTime(new Date(event.startAt)).split(' ')[0].replace(/\//g, '-');
+  const day = formatLocalDateTime(new Date(event.startAt || event.createdAt || now)).split(' ')[0].replace(/\//g, '-');
   const slug = String(event.title).normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/đ/g, 'd').replace(/Đ/g, 'D').replace(/[^A-Za-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'su-kien';
   return { buffer, fileName: `su-kien-${slug}-${day}.docx` };
 }

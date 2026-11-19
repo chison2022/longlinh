@@ -239,7 +239,7 @@ function buildSheet(data, { sep = ',' } = {}) {
   if (events) {
     eventRows = [];
     for (const { event, replies } of events.filter((e) => e.event.status !== 'cancelled')) { // a cancelled event is noise here
-      const head = [event.title, day(event.startAt), EVENT_STATUS[event.status] || event.status];
+      const head = [event.title, event.startAt ? day(event.startAt) : '', EVENT_STATUS[event.status] || event.status];
       const list = (replies || []).filter((r) => shown(r.discordId));
       if (!list.length) eventRows.push([...head, '', '', '', '(chưa ai trả lời)', '']);
       for (const status of ['yes', 'maybe', 'no']) {

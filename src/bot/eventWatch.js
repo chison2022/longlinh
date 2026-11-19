@@ -1,10 +1,9 @@
 // The watched event channel (/setup → 🎉 Sự kiện → "Kênh đăng bài sự kiện"): a manager writes an event post there the normal way, and the
-// bot "bumps" it: it answers the post with the event card (✅ Tham gia / ❓ Có thể / ❌ Không), so members register right under the post.
-// The time comes from the post text (eventTimeParse); when none is found the bot answers with a button instead (ev:bump:<post id>) that
-// lets a manager pick the time (the picker + preview of the events flow, which then posts the card the same way).
+// bot "bumps" it: it answers the post with a check-in card, so members register right under the post.
+// The card only asks for the check-in and counts the ticks (ui/eventCard buildCheckInCard: ✅ / ❌, no ❓). The time is read from the post
+// (eventTimeParse) for the reminder and the automatic lock; a post without one is opened all the same, with no time: a manager locks it.
 // Only top-level posts of managers count (no replies, no bots, no other channel); one event per post (unique index on source_message_id).
 // Needs the Message Content intent (see client.js: without it this listener is not registered).
-const { ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const db = require('../db');
 const defaults = require('../../config/defaults');
 const eventService = require('../services/eventService');
@@ -18,8 +17,6 @@ const { scheduleDocSync } = require('./eventDocSync');
 const { logEvent } = require('../eventLog');
 
 const FALLBACK_TITLE = 'Sự kiện mới';
-const ASK_TIME = '⏰ Chưa thấy giờ sự kiện trong bài nên chưa mở báo danh.\n-# Quản lý bấm nút bên dưới để chọn giờ.';
-const ASK_LABEL = '⏰ Chọn giờ & mở báo danh';
 
 // Is this message a post the bot should bump? `config` = the guild config (cached).
 function isWatchedPost(message, config) {
@@ -32,7 +29,7 @@ function isWatchedPost(message, config) {
 }
 
 // Creates the event of the post `source` ({ guildId, channelId, messageId }) and answers the post with its card.
-// `value` = { title, startAt, endAt?, deadlineAt?, capacity?, minParticipants?, allowMaybe?, description? }.
+// `value` = { title, startAt (null: no time), endAt?, deadlineAt?, capacity?, minParticipants?, description? }.
 // -> { event, existed } (existed: the post had an event already, nothing new was made). Throws when the card cannot be posted (the event is removed).
 async function bumpPost(client, source, value, { by = null, tagRoleId = null } = {}) {
   const existing = await eventService.eventBySource(source.guildId, source.messageId);
@@ -43,14 +40,15 @@ async function bumpPost(client, source, value, { by = null, tagRoleId = null } =
       guildId: source.guildId,
       category: defaults.eventCategoryDefault,
       description: '',
-      deadlineAt: value.startAt,
+      deadlineAt: value.startAt || null,
+      allowMaybe: false,
       ...value,
       createdBy: by,
       sourceMessageId: String(source.messageId),
     });
   } catch (err) {
     if (!db.isUniqueViolation(err)) throw err;
-    return { event: await eventService.eventBySource(source.guildId, source.messageId), existed: true }; // a second click won the race
+    return { event: await eventService.eventBySource(source.guildId, source.messageId), existed: true }; // a second post event won the race
   }
   let posted;
   try {
@@ -63,8 +61,6 @@ async function bumpPost(client, source, value, { by = null, tagRoleId = null } =
   scheduleDocSync(client, source.guildId);
   return { event: posted, existed: false };
 }
-
-const askButton = (messageId) => new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`ev:bump:${messageId}`).setLabel(ASK_LABEL).setStyle(ButtonStyle.Primary));
 
 async function onMessageCreate(message) {
   if (!message || !message.guild || (message.author && message.author.bot)) return;
@@ -80,17 +76,12 @@ async function onMessageCreate(message) {
   const title = titleOf(message.content) || FALLBACK_TITLE;
   const startAt = parseEventTime(message.content, new Date());
   try {
-    if (!startAt) {
-      await message.reply({ content: ASK_TIME, components: [askButton(message.id)], allowedMentions: { parse: [], repliedUser: false } });
-      logEvent('event', 'bump', { ...ctx, result: 'ask_time' });
-      return;
-    }
     const { event, existed } = await bumpPost(message.client, { guildId: message.guild.id, channelId: message.channelId, messageId: message.id }, { title, startAt }, { by: message.author.id });
-    logEvent('event', 'bump', { ...ctx, result: existed ? 'exists' : 'created', eid: String(event && event._id), start: startAt.toISOString() });
+    logEvent('event', 'bump', { ...ctx, result: existed ? 'exists' : 'created', eid: String(event && event._id), start: startAt ? startAt.toISOString() : null });
   } catch (err) {
     console.error('[eventWatch] bump failed:', err.message);
     logEvent('event', 'bump', { ...ctx, result: 'error', err, lvl: 'warn' });
   }
 }
 
-module.exports = { onMessageCreate, bumpPost, isWatchedPost, ASK_TIME, ASK_LABEL };
+module.exports = { onMessageCreate, bumpPost, isWatchedPost };

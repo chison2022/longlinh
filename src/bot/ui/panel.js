@@ -182,7 +182,7 @@ function buildEventSetupView(config, note, ctx = {}) {
       : channelLine('Kênh đăng bài sự kiện', config.eventWatchChannelId, ctx.guild);
   const lines = [
     '**🎉 Sự kiện**',
-    '• Quản lý đăng bài sự kiện ở kênh đăng bài: bot đọc giờ trong bài và trả lời ngay dưới bài bằng thẻ báo danh. Bài không ghi giờ thì bot hiện nút ⏰ Chọn giờ.',
+    '• Quản lý đăng bài sự kiện ở kênh đăng bài: bot trả lời ngay dưới bài bằng thẻ điểm danh (✅ / ❌ và số người đã tick). Bài có ghi giờ thì bot tự nhắc và tự chốt theo giờ đó; không ghi giờ thì quản lý tự bấm chốt.',
     '• Bảng quản lý ở kênh quản lý sự kiện: xem, sửa, chốt, huỷ, nhắc các sự kiện đang mở.',
     watchLine,
     adminId ? channelLine(`Kênh quản lý sự kiện${config.eventAdminChannelId ? '' : ' (mặc định: kênh admin)'}`, adminId, ctx.guild) : '⚠️ Kênh quản lý sự kiện: _chưa chọn_ (và chưa có kênh admin)',

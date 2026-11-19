@@ -34,13 +34,14 @@ function minLine(event, counts, { anyStatus = false } = {}) {
 const isFull = (event, counts) => Boolean(event.capacity) && counts && counts.yes >= event.capacity;
 
 function statusLine(event, counts) {
-  if (event.status === 'open') return `🟢 Đang mở · hạn ${discordTs(new Date(event.deadlineAt), 'R')}${isFull(event, counts) ? ' · đã đủ người' : ''}`;
+  if (event.status === 'open') return `🟢 Đang mở${event.deadlineAt ? ` · hạn ${discordTs(new Date(event.deadlineAt), 'R')}` : ''}${isFull(event, counts) ? ' · đã đủ người' : ''}`;
   if (event.status === 'locked') return '🔒 Đã chốt';
   if (event.status === 'cancelled') return '❌ Đã huỷ';
   return '⚫ Đã kết thúc';
 }
 
 function timeLine(event) {
+  if (!event.startAt) return null; // opened from a post without a time
   const start = new Date(event.startAt);
   return `🕗 ${discordTs(start, 'f')} (${discordTs(start, 'R')})${event.endAt ? ` – ${discordTs(new Date(event.endAt), 't')}` : ''}`;
 }
@@ -69,6 +70,7 @@ function fitDescription(description, budget) {
 // text budget of a V2 message. `preview` = every button off (the manager's preview), `reserve` = more text to keep free.
 // Returns the EDIT payload; use v2Create() from ui/common for channel.send.
 function buildEventCard(event, counts, { preview = false, reserve = 0 } = {}) {
+  if (event.sourceMessageId) return buildCheckInCard(event, counts, { preview });
   const eid = String(event._id);
   const open = event.status === 'open';
   const cancelled = event.status === 'cancelled';
@@ -76,7 +78,7 @@ function buildEventCard(event, counts, { preview = false, reserve = 0 } = {}) {
   const title = truncate(event.title, 100);
   const headFixed = `### ${cancelled ? `~~${cat.emoji} ${title}~~` : `${cat.emoji} ${title}`}\n-# ${cat.emoji} ${cat.label}`;
   const info = [timeLine(event), statusLine(event, counts), countsLine(event, counts), minLine(event, counts)].filter(Boolean).join('\n');
-  const footer = open ? `-# Đổi được tới ${discordTs(new Date(event.deadlineAt), 'f')}` : '';
+  const footer = open && event.deadlineAt ? `-# Đổi được tới ${discordTs(new Date(event.deadlineAt), 'f')}` : '';
   const budget = V2_TEXT_LIMIT - CARD_MARGIN - reserve - headFixed.length - 1 - info.length - footer.length;
   const desc = event.description ? fitDescription(event.description, budget) : { text: '', truncated: false };
   const off = !open || preview;
@@ -93,6 +95,31 @@ function buildEventCard(event, counts, { preview = false, reserve = 0 } = {}) {
     .addTextDisplayComponents(textDisplay(info))
     .addActionRowComponents(row(...buttons));
   if (footer) container.addTextDisplayComponents(textDisplay(footer));
+  return v2Payload([container]);
+}
+
+// The card under a manager's post in the watched channel (event.sourceMessageId): the post already says what the event is, so the card only
+// asks for the check-in and counts the ticks, like the war card. ✅ / ❌ (+ ❓ when the event allows it) and 📋 Danh sách; the time line only
+// when the post had a time.
+function buildCheckInCard(event, counts, { preview = false } = {}) {
+  const eid = String(event._id);
+  const c = counts || { yes: 0, maybe: 0, no: 0 };
+  const open = event.status === 'open';
+  const head = event.status === 'cancelled' ? '### ~~📋 Điểm danh sự kiện~~' : '### 📋 Điểm danh sự kiện';
+  const ask = open ? 'Vui lòng báo danh sự kiện vào đây.' : null;
+  const tally = [`✅ Tham gia: **${c.yes}**${event.capacity ? `/${event.capacity}` : ''}`, event.allowMaybe === false ? null : `❓ Có thể: **${c.maybe}**`, `❌ Không: **${c.no}**`].filter(Boolean).join(' · ');
+  const info = [tally, timeLine(event), statusLine(event, c)].filter(Boolean).join('\n');
+  const off = !open || preview;
+  const buttons = [button(`ev:rp:${eid}:yes`, '✅ Tham gia', ButtonStyle.Success, off)];
+  if (event.allowMaybe !== false) buttons.push(button(`ev:rp:${eid}:maybe`, '❓ Có thể', ButtonStyle.Secondary, off));
+  buttons.push(button(`ev:rp:${eid}:no`, '❌ Không', ButtonStyle.Danger, off), button(`ev:ls:${eid}`, '📋 Danh sách', ButtonStyle.Secondary, preview));
+  const container = new ContainerBuilder()
+    .setAccentColor(COLORS[event.status] ?? COLORS.done)
+    .addTextDisplayComponents(textDisplay(ask ? `${head}\n${ask}` : head))
+    .addSeparatorComponents(separator())
+    .addTextDisplayComponents(textDisplay(info))
+    .addActionRowComponents(row(...buttons));
+  if (open && event.deadlineAt) container.addTextDisplayComponents(textDisplay(`-# Đổi được tới ${discordTs(new Date(event.deadlineAt), 'f')}`));
   return v2Payload([container]);
 }
 
@@ -204,7 +231,7 @@ function eventLine(event, counts) {
   const c = counts || { yes: 0, maybe: 0, no: 0 };
   const cap = event.capacity ? `/${event.capacity}` : '';
   const missing = eventService.shortfallOf(event, c);
-  return `${eventService.categoryOf(event).emoji} ${link ? `[${title}](${link})` : title} · ${discordTs(new Date(event.startAt), 'f')} · ${eventService.STATUS_LABELS[event.status] || event.status} · ✅ ${c.yes}${cap} · ❓ ${c.maybe} · ❌ ${c.no}${missing ? ` · ⚠️ thiếu ${missing}` : ''}`;
+  return `${eventService.categoryOf(event).emoji} ${link ? `[${title}](${link})` : title} · ${event.startAt ? discordTs(new Date(event.startAt), 'f') : 'chưa có giờ'} · ${eventService.STATUS_LABELS[event.status] || event.status} · ✅ ${c.yes}${cap} · ❓ ${c.maybe} · ❌ ${c.no}${missing ? ` · ⚠️ thiếu ${missing}` : ''}`;
 }
 
 const MAX_LISTED = 10;
@@ -233,7 +260,7 @@ function buildEventsView({ events = [], counts = new Map(), selectedId = null, c
             events.slice(0, 25).map((e) => ({
               label: truncate(`${eventService.categoryOf(e).emoji} ${e.title}`, 100),
               value: String(e._id),
-              description: truncate(`${formatLocalDateTime(new Date(e.startAt))} · ✅ ${countOf(e).yes}${e.capacity ? `/${e.capacity}` : ''} · ${eventService.STATUS_LABELS[e.status] || e.status}`, 100),
+              description: truncate(`${e.startAt ? formatLocalDateTime(new Date(e.startAt)) : 'Chưa có giờ'} · ✅ ${countOf(e).yes}${e.capacity ? `/${e.capacity}` : ''} · ${eventService.STATUS_LABELS[e.status] || e.status}`, 100),
               default: selected ? String(e._id) === String(selected._id) : false,
             }))
           )

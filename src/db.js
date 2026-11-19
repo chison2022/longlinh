@@ -142,6 +142,8 @@ function makeDb() {
     'create unique index if not exists game_characters_uid on game_characters (guild_id, game_uid) where game_uid is not null',
     'alter table guild_events add column if not exists source_message_id text', // events opened from a post in the watched channel (2026-11-18)
     'create unique index if not exists guild_events_source on guild_events (guild_id, source_message_id) where source_message_id is not null',
+    'alter table guild_events alter column start_at drop not null', // an event opened from a post without a time (2026-11-19)
+    'alter table guild_events alter column deadline_at drop not null',
   ];
 
   async function ensureSchema() {

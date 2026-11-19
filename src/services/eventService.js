@@ -11,6 +11,7 @@ const DESCRIPTION_MAX = 4000; // the paragraph input of a modal
 const CAPACITY_MAX = 1000;
 const CATEGORIES = defaults.eventCategories;
 const DONE_AFTER_START_MS = 6 * HOUR; // an event without an end time is over 6 h after it started
+const UNTIMED_DONE_MS = 7 * 24 * HOUR; // an event without any time is over 7 days after it was made
 const DONE_AFTER_END_MS = HOUR; // ... with one, 1 h after it ended
 const SHEET_DAYS = 30; // the sheet tab keeps events of the last 30 days plus the upcoming ones
 const MANUAL_REMIND_COOLDOWN_MS = 10 * MINUTE;
@@ -183,6 +184,7 @@ function defaultPick(now) {
 // The picker values nearest to a stored event, and whether they say exactly its times (the lists step by 15 minutes).
 // -> { pick, exact, base }; `base` keeps the stored times so a value left untouched is saved as it was (see pickTimes).
 function pickFromEvent(event) {
+  if (!hasTime(event)) return { pick: defaultPick(new Date()), exact: true, base: null }; // no time yet: the picker starts like a new event
   const startAt = new Date(event.startAt);
   const deadlineAt = new Date(event.deadlineAt);
   const rounded = new Date(Math.round(startAt.getTime() / (15 * MINUTE)) * 15 * MINUTE);
@@ -272,16 +274,20 @@ function categoryOf(event) {
 }
 
 // Members can answer while the card is open and the deadline has not passed (the scheduler locks it within a minute after).
-const canReply = (event, now = new Date()) => Boolean(event) && event.status === 'open' && now <= new Date(event.deadlineAt);
+const canReply = (event, now = new Date()) => Boolean(event) && event.status === 'open' && (!event.deadlineAt || now <= new Date(event.deadlineAt));
+
+// An event opened from a post without a time has no start / deadline: no automatic lock, reminder or end (only a manager locks it).
+const hasTime = (event) => Boolean(event && event.startAt);
 
 // When the automatic reminder is due (null: off).
 function remindAtOf(event) {
   const minutes = Number(event.remindBeforeMinutes);
+  if (!hasTime(event)) return null;
   return minutes > 0 ? new Date(new Date(event.startAt).getTime() - minutes * MINUTE) : null;
 }
 
 // When an unfinished event counts as over.
-const doneAtOf = (event) => (event.endAt ? new Date(new Date(event.endAt).getTime() + DONE_AFTER_END_MS) : new Date(new Date(event.startAt).getTime() + DONE_AFTER_START_MS));
+const doneAtOf = (event) => (!hasTime(event) ? new Date(new Date(event.createdAt).getTime() + UNTIMED_DONE_MS) : event.endAt ? new Date(new Date(event.endAt).getTime() + DONE_AFTER_END_MS) : new Date(new Date(event.startAt).getTime() + DONE_AFTER_START_MS));
 
 // The people a reminder pings: ✅ then ❓ (never ❌), each once.
 function remindTargets(replies) {
@@ -480,7 +486,7 @@ async function findDueReminders(now) {
 }
 
 async function findFinished(now) {
-  const rows = await db.q(`${EVENT_SQL} where e.status in ('open', 'locked') and e.start_at < $1`, [now]);
+  const rows = await db.q(`${EVENT_SQL} where e.status in ('open', 'locked') and (e.start_at < $1 or (e.start_at is null and e.created_at < $2))`, [now, new Date(now.getTime() - UNTIMED_DONE_MS)]);
   return rows.filter((e) => doneAtOf(e) <= now);
 }
 
@@ -522,7 +528,7 @@ async function releaseManualRemind(eventId, at) {
 // The tab's data: events of the last SHEET_DAYS days and the upcoming ones, newest first, each with its answers (first answer first).
 // -> { items: [{ event, replies }], any } where `any` = the guild has ever had an event (a guild without any gets no tab at all).
 async function listForSheet(guildId, now = new Date()) {
-  const events = await db.q(`${EVENT_SQL} where e.guild_id = $1 and e.start_at >= $2 order by e.start_at desc`, [guildId, new Date(now.getTime() - SHEET_DAYS * 24 * HOUR)]);
+  const events = await db.q(`${EVENT_SQL} where e.guild_id = $1 and (e.start_at >= $2 or (e.start_at is null and e.created_at >= $2)) order by coalesce(e.start_at, e.created_at) desc`, [guildId, new Date(now.getTime() - SHEET_DAYS * 24 * HOUR)]);
   if (!events.length) return { items: [], any: Boolean(await db.one('select 1 as x from guild_events where guild_id = $1 limit 1', [guildId])) };
   const replies = await db.q(`${REPLY_SQL} where r.event_id = any($1) order by r.created_at, m.discord_id`, [events.map((e) => e._id)]);
   const byEvent = new Map();
@@ -566,6 +572,7 @@ module.exports = {
   shortfallOf,
   categoryOf,
   canReply,
+  hasTime,
   remindAtOf,
   doneAtOf,
   remindTargets,

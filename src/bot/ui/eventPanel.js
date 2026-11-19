@@ -19,7 +19,7 @@ function panelLine(event, counts) {
   const title = truncate(esc(event.title), 60);
   const cap = event.capacity ? `/${event.capacity}` : '';
   const short = eventService.shortfallOf(event, c) ? ` · ⚠️ cần ${event.minParticipants}` : '';
-  return `${eventService.categoryOf(event).emoji} ${link ? `[${title}](${link})` : title} · ${dayNameOf(event.startAt)} ${discordTs(new Date(event.startAt), 'd')} ${discordTs(new Date(event.startAt), 't')} · ${eventService.STATUS_LABELS[event.status] || event.status} · ✅ ${c.yes}${cap}${short}`;
+  return `${eventService.categoryOf(event).emoji} ${link ? `[${title}](${link})` : title} · ${event.startAt ? `${dayNameOf(event.startAt)} ${discordTs(new Date(event.startAt), 'd')} ${discordTs(new Date(event.startAt), 't')}` : 'chưa có giờ'} · ${eventService.STATUS_LABELS[event.status] || event.status} · ✅ ${c.yes}${cap}${short}`;
 }
 
 // `events` = open / locked events (soonest first), `counts` = Map eventId -> { yes, maybe, no }. For channel.send (v2Create) or an edit.

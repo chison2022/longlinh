@@ -35,11 +35,11 @@ function rowsOf({ replies, gameNames, classOf }) {
 function textOf(event, replies, { categoryOf, statusOf }) {
   const count = (s) => replies.filter((r) => r.status === s).length;
   const yes = count('yes');
-  const when = `${formatLocalDateTime(new Date(event.startAt))}${event.endAt ? ` – ${formatLocalDateTime(new Date(event.endAt)).split(' ').pop()}` : ''}`;
+  const when = !event.startAt ? 'chưa có giờ' : `${formatLocalDateTime(new Date(event.startAt))}${event.endAt ? ` – ${formatLocalDateTime(new Date(event.endAt)).split(' ').pop()}` : ''}`;
   const lines = [
     oneLine(event.title),
     [categoryOf(event), statusOf(event)].filter(Boolean).join(' · '),
-    `Thời gian: ${when} · hạn trả lời ${formatLocalDateTime(new Date(event.deadlineAt))}`,
+    `Thời gian: ${when}${event.deadlineAt ? ` · hạn trả lời ${formatLocalDateTime(new Date(event.deadlineAt))}` : ''}`,
     `✅ ${yes}${event.capacity ? `/${event.capacity}` : ''} tham gia · ❓ ${count('maybe')} có thể · ❌ ${count('no')} không${event.minParticipants && yes < event.minParticipants ? ` · ⚠️ còn thiếu ${event.minParticipants - yes}` : ''}`,
   ];
   if (event.description) lines.push(`Thể lệ: ${clean(event.description)}`);

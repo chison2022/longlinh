@@ -22,7 +22,7 @@ sheetSync.scheduleSync = () => {};
 eventDocSync.scheduleDocSync = () => {};
 
 const eventService = require('../src/services/eventService');
-const { onMessageCreate, ASK_LABEL } = require('../src/bot/eventWatch');
+const { onMessageCreate } = require('../src/bot/eventWatch');
 
 const MANAGER = { roles: { cache: new Map() }, permissions: new PermissionsBitField(PermissionFlagsBits.ManageGuild) };
 const MEMBER = { roles: { cache: new Map() }, permissions: new PermissionsBitField(0n) };
@@ -110,16 +110,47 @@ describe('eventWatch: a post in the watched channel opens an event', () => {
     assert.equal((await eventsOfGuild()).length, 1);
   });
 
-  it('no time in the post: no event yet, the bot answers with the ⏰ button for that post (no ping)', async () => {
+  it('no time in the post: opened at once without a time (no deadline, members can answer, nothing else posted)', async () => {
     const { msg, replies } = post('Giải đấu bang sắp tới, mọi người chuẩn bị nhé');
     await onMessageCreate(msg);
-    assert.equal((await eventsOfGuild()).length, 0);
-    assert.equal(replies.length, 1);
-    assert.match(replies[0].content, /Chưa thấy giờ sự kiện trong bài/);
-    const button = replies[0].components[0].toJSON().components[0];
-    assert.equal(button.custom_id, `ev:bump:${msg.id}`);
-    assert.equal(button.label, ASK_LABEL);
-    assert.deepEqual(replies[0].allowedMentions, { parse: [], repliedUser: false });
+    const rows = await eventsOfGuild();
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].start_at, null);
+    assert.equal(rows[0].deadline_at, null);
+    assert.equal(posted.length, 1);
+    assert.equal(posted[0].opts.replyTo, msg.id);
+    assert.equal(replies.length, 0);
+    const event = await eventService.eventBySource(GUILD, msg.id);
+    assert.equal(event.allowMaybe, false, 'only ✅ / ❌ under a post');
+    assert.equal(eventService.canReply(event), true);
+    assert.equal(eventService.remindAtOf(event), null);
+  });
+
+  it('an event without a time is never locked or reminded by the clock, and is over 7 days after it was made', async () => {
+    await onMessageCreate(post('Điểm danh đi săn boss').msg);
+    const far = new Date(Date.now() + 365 * 24 * 3600 * 1000);
+    assert.equal((await eventService.findDueLocks(far)).length, 0);
+    assert.equal((await eventService.findDueReminders(far)).length, 0);
+    assert.equal((await eventService.findFinished(new Date(Date.now() + 6 * 24 * 3600 * 1000))).length, 0);
+    assert.equal((await eventService.findFinished(new Date(Date.now() + 8 * 24 * 3600 * 1000))).length, 1);
+  });
+
+  it('the card under a post: "Điểm danh sự kiện", the ticks, the time line only with a time, ✅ / ❌ / 📋', async () => {
+    const { buildEventCard } = require('../src/bot/ui/eventCard');
+    await onMessageCreate(post('Điểm danh đi săn boss').msg);
+    await onMessageCreate(post('Họp bang 21:00 thứ 7').msg);
+    const [untimed, timed] = posted.map((p) => p.event);
+    const texts = (payload) => JSON.stringify(payload.components.map((c) => c.toJSON ? c.toJSON() : c));
+    const a = texts(buildEventCard(untimed, { yes: 12, maybe: 0, no: 3 }));
+    assert.match(a, /Điểm danh sự kiện/);
+    assert.match(a, /Vui lòng báo danh sự kiện vào đây/);
+    assert.match(a, /✅ Tham gia: \*\*12\*\*/);
+    assert.match(a, /❌ Không: \*\*3\*\*/);
+    assert.doesNotMatch(a, /❓/);
+    assert.doesNotMatch(a, /🕗|Đổi được tới/);
+    const b = texts(buildEventCard(timed, { yes: 0, maybe: 0, no: 0 }));
+    assert.match(b, /🕗/);
+    assert.match(b, /Đổi được tới/);
   });
 
   it('the card cannot be posted: the event is removed again (nothing half made)', async () => {

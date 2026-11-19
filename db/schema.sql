@@ -155,9 +155,9 @@ create table guild_events (
   title                  varchar(100) not null,
   description            varchar(4000) not null default '',
   category               text not null,
-  start_at               timestamptz not null,
+  start_at               timestamptz,                     -- null = no time (an event opened from a post without one: only a manager locks it)
   end_at                 timestamptz,
-  deadline_at            timestamptz not null,
+  deadline_at            timestamptz,                     -- null = no deadline (same)
   capacity               int check (capacity >= 1),       -- null = unlimited; enforced by locking the event row and counting 'yes'
   min_participants       int check (min_participants >= 1),
   min_notice_at          timestamptz,

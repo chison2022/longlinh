@@ -7,8 +7,6 @@
 // A modal with a typed `time` field (opened before the picker existed) still goes the old way. The shortfall notice in the admin channel has
 // ev:mincancel|minext|minkeep:<eid> + modal ev:minextModal:<eid>.
 // The manager view is one ephemeral V2 message edited in place.
-// ev:bump:<post id> = the button the bot puts under a post of the watched event channel that has no time (see ../eventWatch): the same picker and
-// preview, then the card is posted as a reply to that post (texts.source) and the button message goes away.
 const crypto = require('node:crypto');
 const { MessageFlags, AttachmentBuilder } = require('discord.js');
 const gameRoster = require('../../services/gameRosterService');
@@ -34,9 +32,6 @@ const scheduleSync = (client, guildId) => {
 const { liveRegs } = require('../liveNames');
 const { NO_PERMISSION, eph, displayNameOf } = require('./common');
 const { logEvent, ixCtx } = require('../../eventLog');
-const defaults = require('../../../config/defaults');
-const { titleOf } = require('../../services/eventTimeParse');
-const { bumpPost } = require('../eventWatch');
 
 const NOT_FOUND = 'Sự kiện không tồn tại hoặc đã bị xoá.';
 const CLOSED = '🔒 Đã hết hạn đăng ký sự kiện này.';
@@ -45,10 +40,10 @@ const DRAFT_EXPIRED = 'Bản xem trước đã hết hạn. Bấm lại nút đ�
 const DRAFT_TTL_MS = 15 * 60 * 1000;
 const PICKER_EXPIRED = 'Phiên chọn giờ đã hết hạn. Bấm lại nút để làm lại.';
 const PICKER_TTL_MS = 30 * 60 * 1000;
-const ADMIN_ACTIONS = new Set(['pk', 'pkok', 'pkcancel', 'pick', 'sel', 'new', 'newModal', 'edit', 'editModal', 'lock', 'cancel', 'cancelok', 'remind', 'remindok', 'maybe', 'drtag', 'drmaybe', 'drpost', 'drcancel', 'mincancel', 'minext', 'minextModal', 'minkeep', 'pnew', 'pnewModal', 'pmanage', 'doc', 'bump']);
+const ADMIN_ACTIONS = new Set(['pk', 'pkok', 'pkcancel', 'pick', 'sel', 'new', 'newModal', 'edit', 'editModal', 'lock', 'cancel', 'cancelok', 'remind', 'remindok', 'maybe', 'drtag', 'drmaybe', 'drpost', 'drcancel', 'mincancel', 'minext', 'minextModal', 'minkeep', 'pnew', 'pnewModal', 'pmanage', 'doc']);
 const OPENS_MODAL = new Set(['new', 'pnew', 'edit', 'minext']);
 const SUBMITS = new Set(['newModal', 'pnewModal', 'editModal', 'minextModal']);
-const NEW_EPHEMERAL = new Set(['pnewModal', 'pmanage', 'doc', 'bump']); // answered from the persistent panel: always a new ephemeral reply, never an edit of the panel
+const NEW_EPHEMERAL = new Set(['pnewModal', 'pmanage', 'doc']); // answered from the persistent panel: always a new ephemeral reply, never an edit of the panel
 const MODAL_FETCH_MS = 1500; // what we may spend on the DB before showModal (Discord wants the modal within 3 s)
 const REMIND_COOLDOWN_MIN = Math.round(eventService.MANUAL_REMIND_COOLDOWN_MS / 60000);
 const reminding = new Set(); // event ids with a manual reminder being sent by this process
@@ -119,7 +114,7 @@ async function onReply(interaction, eventId, status) {
   logEvent('event', 'reply', { ...ctx, result: 'ok', ...(res.seatFreed === false ? { seat: 'not_freed', lvl: 'warn' } : {}) });
   scheduleEventRefresh(interaction.client, event._id);
   scheduleSync(interaction.client, event.guildId);
-  return interaction.editReply(`✅ Đã ghi nhận: **${eventService.REPLY_LABELS[status]}** — ${defang(event.title)}. Đổi được tới ${discordTs(new Date(event.deadlineAt), 'f')}.`);
+  return interaction.editReply(`✅ Đã ghi nhận: **${eventService.REPLY_LABELS[status]}** — ${defang(event.title)}.${event.deadlineAt ? ` Đổi được tới ${discordTs(new Date(event.deadlineAt), 'f')}.` : ''}`);
 }
 
 // ev:ls:<eid> - who joins, in order of answer (names only, no mentions)
@@ -293,7 +288,7 @@ async function onPickOk(interaction, config, pickerId) {
   if (error) return interaction.editReply(pickerView(pickerId, rec, now)); // (✅ is off then; this is a forced click or the time passed meanwhile)
   const value = { ...rec.texts, ...times };
   if (!rec.eventId) {
-    if (!rec.texts.source && !eventService.eventChannelOf(config)) {
+    if (!eventService.eventChannelOf(config)) {
       rec.note = NO_CHANNEL;
       return interaction.editReply(pickerView(pickerId, rec, now));
     }
@@ -334,10 +329,9 @@ async function onDraft(interaction, config, action, draftId) {
     drafts.set(String(draftId), draft);
     return interaction.editReply(previewOf(draftId, draft, config, note));
   };
-  const { value } = draft;
-  if (value.source) return postBump(interaction, config, draft, back);
   const cardChannelId = eventService.eventChannelOf(config);
   if (!cardChannelId) return back('⚠️ Chưa chọn kênh thông báo sự kiện. Dùng lệnh /setup trước.');
+  const { value } = draft;
   const now = new Date();
   if (value.deadlineAt <= now || value.startAt <= now) {
     logEvent('event', 'create', { ...ixCtx(interaction), result: 'invalid', why: 'stale_draft' });
@@ -358,47 +352,6 @@ async function onDraft(interaction, config, action, draftId) {
   scheduleSync(interaction.client, interaction.guildId);
   logEvent('event', 'create', { ...ixCtx(interaction), result: 'created', eid: String(event._id), start: value.startAt.toISOString(), deadline: value.deadlineAt.toISOString(), ...info });
   return interaction.editReply(await viewOf(interaction.guildId, { selectedId: String(event._id), note: `✅ Đã tạo **${defang(value.title)}** và đăng ở ${eventService.messageLink(posted)}` }));
-}
-
-// ---------- the bump of a post without a time: ev:bump:<post id> -> the picker -> the preview -> postBump ----------
-
-// The button under the post: checks the post is still there and has no event yet, then opens the picker (an ephemeral reply).
-async function onBumpStart(interaction, postId) {
-  const show = (text) => interaction.editReply({ content: text, components: [], allowedMentions: { parse: [] } });
-  const post = interaction.channel ? await interaction.channel.messages.fetch(String(postId)).catch(() => null) : null;
-  if (!post) return show('Bài gốc đã bị xoá, không mở báo danh được.');
-  const existing = await eventService.eventBySource(interaction.guildId, post.id);
-  if (existing) return show(`Bài này đã mở báo danh rồi: ${eventService.messageLink(existing) || defang(existing.title)}`);
-  logEvent('event', 'bump', { ...ixCtx(interaction), post: post.id, result: 'pick_time' });
-  const texts = {
-    title: titleOf(post.content) || 'Sự kiện mới',
-    category: defaults.eventCategoryDefault,
-    description: '',
-    capacity: null,
-    minParticipants: null,
-    source: { guildId: interaction.guildId, channelId: post.channelId, messageId: post.id, promptId: interaction.message && interaction.message.id },
-  };
-  return showPicker(interaction, texts);
-}
-
-// 📢 Đăng of a bump draft: the card answers the post, the "⏰ Chọn giờ" message is removed.
-async function postBump(interaction, config, draft, back) {
-  const { source, ...value } = draft.value;
-  const now = new Date();
-  if (value.deadlineAt <= now || value.startAt <= now) return back(`❌ ${value.startAt <= now ? 'Giờ bắt đầu' : 'Hạn đăng ký'} đã qua trong lúc xem trước. Bấm lại ⏰ Chọn giờ dưới bài.`);
-  const tagRoleId = draft.tag && config.memberRoleId ? config.memberRoleId : null;
-  let result;
-  try {
-    result = await bumpPost(interaction.client, source, { ...value, allowMaybe: draft.allowMaybe }, { by: interaction.user.id, tagRoleId });
-  } catch (err) {
-    console.error('[events] bump post:', err.message);
-    logEvent('event', 'bump', { ...ixCtx(interaction), post: source.messageId, result: 'error', err });
-    return back(`❌ Không đăng được thẻ dưới bài ở <#${source.channelId}>. Kiểm tra quyền của bot (Xem kênh, Gửi tin nhắn).`);
-  }
-  if (source.promptId && interaction.channel) interaction.channel.messages.delete(source.promptId).catch(() => {});
-  logEvent('event', 'bump', { ...ixCtx(interaction), post: source.messageId, result: result.existed ? 'exists' : 'created', eid: String(result.event && result.event._id) });
-  const link = eventService.messageLink(result.event);
-  return interaction.editReply({ content: result.existed ? `Bài này đã mở báo danh rồi: ${link}` : `✅ Đã mở báo danh **${defang(value.title)}** ngay dưới bài: ${link}`, components: [], allowedMentions: { parse: [] } });
 }
 
 async function onEditSubmit(interaction, eventId) {
@@ -452,11 +405,12 @@ async function onLock(interaction, eventId) {
     result = 'locked';
     note = `🔒 Đã chốt **${defang(event.title)}**: không nhận thêm trả lời.`;
   } else if (event.status === 'locked') {
-    if (new Date(event.startAt) <= now) return show('❌ Sự kiện đã bắt đầu, không mở lại được.');
-    const deadline = new Date(event.deadlineAt) > now ? new Date(event.deadlineAt) : new Date(event.startAt); // a passed deadline would lock it again at once
+    if (event.startAt && new Date(event.startAt) <= now) return show('❌ Sự kiện đã bắt đầu, không mở lại được.');
+    // a passed deadline would lock it again at once; an event without a time stays without a deadline
+    const deadline = !event.startAt ? null : new Date(event.deadlineAt) > now ? new Date(event.deadlineAt) : new Date(event.startAt);
     updated = await eventService.reopenEvent(event._id, deadline);
     result = 'reopened';
-    note = `🟢 Đã mở lại **${defang(event.title)}** (hạn: ${discordTs(deadline, 'f')}).`;
+    note = `🟢 Đã mở lại **${defang(event.title)}**${deadline ? ` (hạn: ${discordTs(deadline, 'f')})` : ''}.`;
   } else {
     return show(`❌ Sự kiện đã ${event.status === 'cancelled' ? 'huỷ' : 'kết thúc'}, không chốt / mở lại được.`);
   }
@@ -586,7 +540,7 @@ async function onRemind(interaction, config, eventId, send) {
     }
     const channelId = event.channelId || eventService.eventChannelOf(config);
     const link = eventService.messageLink(event);
-    const header = `📣 **${defang(event.title)}** — nhắc tham gia, bắt đầu ${discordTs(new Date(event.startAt), 'R')}.${link ? ` ${link}` : ''}`;
+    const header = `📣 **${defang(event.title)}** — nhắc tham gia${event.startAt ? `, bắt đầu ${discordTs(new Date(event.startAt), 'R')}` : ''}.${link ? ` ${link}` : ''}`;
     const messages = eventService.buildRemindMessages(header, ids);
     let sent = 0;
     try {
@@ -694,8 +648,6 @@ async function handleAdmin(interaction, action, eventId, arg) {
       return onMinExtend(interaction, eventId);
     case 'doc':
       return onDocx(interaction, eventId);
-    case 'bump':
-      return onBumpStart(interaction, eventId); // (the 3rd part is the post id)
     default:
       return undefined;
   }
