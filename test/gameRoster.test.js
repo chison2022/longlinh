@@ -23,7 +23,7 @@ const gameRosterHandler = require('../src/bot/interactions/gameRoster');
 const { buildPanel } = require('../src/bot/ui/panel');
 const { buildGameUploadModal } = require('../src/bot/ui/settingsModal');
 const { renderRosterPngs } = require('../src/bot/ui/rosterImage');
-const { buildGameRosterXlsx } = require('../src/services/rosterWorkbook');
+const { buildGameRosterXlsx, lastSeen } = require('../src/services/rosterWorkbook');
 
 const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const HEADER = ['STT', 'Tên nhân vật', 'Chức vụ', 'Phái', 'Lực chiến', 'Ngày vào bang', 'Trạng thái (lúc quay)'];
@@ -236,8 +236,49 @@ describe('buildGameRosterXlsx', () => {
     await wb.xlsx.load(buf);
     const ws = wb.getWorksheet('Thành viên');
     assert.equal(ws.getRow(1).getCell(7).value, 'Discord');
-    assert.equal(ws.getRow(2).getCell(7).value, 'Có');
+    assert.equal(ws.getRow(2).getCell(7).value, '✔ Có');
+    assert.equal(ws.getRow(3).getCell(7).value, '✘ Chưa');
     assert.equal(ws.getRow(2).getCell(2).value, '=SUM(1)', 'a plain string, not a formula');
+  });
+});
+
+describe('buildGameRosterXlsx: dates instead of stale counts', () => {
+  const AT = new Date('2026-11-18T12:52:00Z'); // 19:52 Vietnam time
+  it('turns the days in the guild and the last-seen text into dates, and still imports the same values', async () => {
+    const list = [
+      m('A', { daysInGuild: 23, status: '7 giờ trước', inDiscord: true, discordName: 'a#discord' }),
+      m('B', { daysInGuild: 1, status: 'Trong 1 giờ' }),
+      m('C', { daysInGuild: 304, status: '1 ngày trước' }),
+      m('D', { status: 'Offline' }),
+    ];
+    const buf = await buildGameRosterXlsx(list, { classes: CLASSES, importedAt: AT });
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load(buf);
+    const ws = wb.getWorksheet('Thành viên');
+    const iso = (r, c) => ws.getRow(r).getCell(c).value.toISOString().slice(0, 16);
+    assert.equal(iso(2, 5).slice(0, 10), '2026-10-26', 'joined 23 days before 18/11');
+    assert.equal(iso(2, 6), '2026-11-18T12:52', '19:52 - 7h = 12:52 Vietnam time');
+    assert.equal(ws.getRow(2).getCell(6).numFmt, 'dd/mm/yyyy hh:mm');
+    assert.equal(iso(3, 6), '2026-11-18T19:52');
+    assert.equal(iso(4, 6).slice(0, 10), '2026-11-17');
+    assert.equal(ws.getRow(4).getCell(6).numFmt, 'dd/mm/yyyy', 'a day-precise text has no hour');
+    assert.equal(ws.getRow(5).getCell(6).value, 'Không rõ');
+    assert.equal(ws.getRow(2).getCell(8).value, 'a#discord');
+    assert.equal(ws.getRow(1).getCell(10).value, 'Ngày vào bang (số ngày, tính đến 18/11)');
+    assert.equal(ws.getRow(1).getCell(11).value, 'Trạng thái (trong game lúc 18/11 19:52)');
+    const back = await gameRoster.parseRosterXlsx(buf, CLASSES);
+    assert.deepEqual(back.map((x) => [x.name, x.daysInGuild, x.status, x.offDays]), [
+      ['A', 23, '7 giờ trước', 0],
+      ['B', 1, 'Trong 1 giờ', 0],
+      ['C', 304, '1 ngày trước', 1],
+      ['D', 10, 'Offline', null],
+    ]);
+  });
+  it('lastSeen: unknown texts and a missing time give null', () => {
+    assert.equal(lastSeen('Offline', AT), null);
+    assert.equal(lastSeen('', AT), null);
+    assert.equal(lastSeen('5 giờ trước', null), null);
+    assert.equal(lastSeen('2 tuần trước', AT).date.toISOString().slice(0, 10), '2026-11-04');
   });
 });
 
@@ -266,9 +307,9 @@ describe('buildGameRosterXlsx: ID game', () => {
     const wb = new ExcelJS.Workbook();
     await wb.xlsx.load(buf);
     const ws = wb.getWorksheet('Thành viên');
-    assert.equal(ws.getRow(1).getCell(8).value, 'ID game');
-    assert.strictEqual(ws.getRow(2).getCell(8).value, '00123456789012345678');
-    assert.ok(!ws.getRow(3).getCell(8).value);
+    assert.equal(ws.getRow(1).getCell(9).value, 'ID game');
+    assert.strictEqual(ws.getRow(2).getCell(9).value, '00123456789012345678');
+    assert.ok(!ws.getRow(3).getCell(9).value);
     assert.equal((await gameRoster.parseRosterXlsx(buf, CLASSES)).length, 2, 'still importable');
   });
 });
@@ -425,8 +466,11 @@ describe('adm:game handlers', () => {
     await wb.xlsx.load(r.files[0].attachment);
     const ws = wb.getWorksheet('Thành viên');
     assert.equal(ws.rowCount, 4);
-    assert.equal(ws.getRow(2).getCell(7).value, 'Có');
-    assert.ok(!ws.getRow(3).getCell(7).value);
+    assert.equal(ws.getRow(2).getCell(7).value, '✔ Có');
+    assert.equal(ws.getRow(3).getCell(7).value, '✘ Chưa');
+    assert.ok(ws.getRow(2).getCell(8).value, 'the linked Discord name is shown');
+    assert.ok(!ws.getRow(3).getCell(8).value);
+    assert.ok(ws.getRow(2).getCell(5).value instanceof Date, 'the join date comes from the import time');
   });
   it('adm:gameup opens the modal without deferring; denied for non-admins', async () => {
     const ok = interaction();

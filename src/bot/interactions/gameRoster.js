@@ -88,7 +88,9 @@ async function load(interaction, config) {
   const infos = [...interaction.guild.members.cache.values()].map(memberInfo).filter((m) => !isStranger(m, config) || mappingsHas(m.id)).map((m) => ({ id: m.id, name: m.name, bot: m.bot }));
   const { match, mappings } = await gameRoster.matchGuild(interaction.guildId, infos, roster);
   const matchedNames = new Set(match.matched.map((m) => m.game));
-  const members = roster.members.map((m) => ({ ...m, inDiscord: matchedNames.has(m) }));
+  const infoName = new Map(infos.map((p) => [p.id, p.name]));
+  const discordOf = new Map(match.matched.map((m) => [m.game, infoName.get(m.discordId)]));
+  const members = roster.members.map((m) => ({ ...m, inDiscord: matchedNames.has(m), discordName: discordOf.get(m) || '' }));
   // linked to a game name that the roster no longer has, and still here: from data already loaded (no extra Discord call)
   const linked = [...mappings].map(([discordId, gameName]) => ({ discordId, gameName, source: mappings.sources && mappings.sources.get(discordId) }));
   const departed = departure.findDeparted(linked, roster.members, new Map(infos.map((p) => [p.id, { name: p.name, bot: p.bot }])));
@@ -208,7 +210,7 @@ async function onXlsx(interaction, config) {
   const data = await load(interaction, config);
   if (!data) return interaction.editReply({ content: NO_ROSTER, components: buttons() });
   const styles = stylesOf(interaction.guild, config);
-  const xlsx = await buildGameRosterXlsx(data.members, { classes: config.classes, styles: lineupStyles(styles) });
+  const xlsx = await buildGameRosterXlsx(data.members, { classes: config.classes, styles: lineupStyles(styles), importedAt: data.roster.importedAt });
   const day = formatLocalDateTime(new Date(data.roster.importedAt)).split(' ')[0].replace('/', '-');
   return interaction.editReply({ content: `📥 Thành viên game — ${data.members.length} người${data.complete ? '' : `\n${MEMBERS_WARNING}`}`, files: [new AttachmentBuilder(xlsx, { name: `thanh-vien-game-${day}.xlsx` })] });
 }
