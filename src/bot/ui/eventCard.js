@@ -216,7 +216,7 @@ function buildEventsView({ events = [], counts = new Map(), selectedId = null, c
   const selected = events.find((e) => String(e._id) === String(selectedId)) || null;
   const lines = ['### 📅 Quản lý sự kiện'];
   if (note) lines.push(note);
-  if (!events.length) lines.push('_Chưa có sự kiện nào đang mở._ Bấm **➕ Tạo sự kiện**.');
+  if (!events.length) lines.push('_Chưa có sự kiện nào đang mở._', '-# Sự kiện mới: quản lý đăng bài ở kênh đăng bài sự kiện, bot tự mở báo danh ngay dưới bài.');
   else {
     lines.push(...events.slice(0, MAX_LISTED).map((e) => `• ${eventLine(e, countOf(e))}`));
     if (events.length > MAX_LISTED) lines.push(`… và ${events.length - MAX_LISTED} sự kiện nữa (chọn trong danh sách bên dưới)`);
@@ -240,7 +240,6 @@ function buildEventsView({ events = [], counts = new Map(), selectedId = null, c
       )
     );
   }
-  container.addActionRowComponents(row(button('ev:new', '➕ Tạo sự kiện', ButtonStyle.Primary)));
 
   if (selected) {
     const eid = String(selected._id);

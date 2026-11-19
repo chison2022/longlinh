@@ -415,12 +415,17 @@ function scheduleEventPanelRefresh(client, guildId, delay = defaults.refreshDebo
 // id removes the message again, so no card is left that the bot cannot edit.
 // `tagRoleId` = ping that ONE role: a V2 message has no content, so the mention is a text line on top of the card and the send allows exactly
 // that role. It only exists on this first post: every later edit (refreshEventCardOnce) rebuilds the card without it, with nothing allowed.
-async function postEventCard(client, channelId, event, { tagRoleId = null } = {}) {
+// `replyTo` = the id of a message in that channel: the card is posted as a reply to it (a bumped post), without pinging its author.
+async function postEventCard(client, channelId, event, { tagRoleId = null, replyTo = null } = {}) {
   const channel = await client.channels.fetch(channelId);
   const payload = v2Create(buildEventCard(event, { yes: 0, maybe: 0, no: 0 }));
   if (tagRoleId) {
     payload.components = [textDisplay(`<@&${tagRoleId}>`), ...payload.components];
     payload.allowedMentions = { roles: [tagRoleId] };
+  }
+  if (replyTo) {
+    payload.reply = { messageReference: String(replyTo), failIfNotExists: false };
+    payload.allowedMentions = { ...(payload.allowedMentions || { parse: [] }), repliedUser: false };
   }
   const msg = await channel.send(payload);
   try {

@@ -33,8 +33,8 @@ function buildEventPanel({ events = [], counts = new Map() } = {}) {
   const container = new ContainerBuilder()
     .setAccentColor(EVENT_PANEL_COLOR)
     .addTextDisplayComponents(textDisplay(lines.join('\n')))
-    .addActionRowComponents(new ActionRowBuilder().addComponents(button('ev:pnew', '➕ Tạo sự kiện', ButtonStyle.Primary), button('ev:pmanage', '📋 Quản lý…')))
-    .addTextDisplayComponents(textDisplay('-# Chỉ quản lý dùng được các nút này.'));
+    .addActionRowComponents(new ActionRowBuilder().addComponents(button('ev:pmanage', '📋 Quản lý…')))
+    .addTextDisplayComponents(textDisplay('-# Sự kiện mới: quản lý đăng bài ở kênh đăng bài sự kiện, bot tự mở báo danh ngay dưới bài. Chỉ quản lý dùng được nút này.'));
   return v2Payload([container]);
 }
 

@@ -34,7 +34,7 @@ function mailKeyFingerprint() {
 async function setupView(interaction, config, note, view = null) {
   const guild = interaction.guild;
   if (view === 'gn' || view === 'feat' || view === 'adv') return buildSetupView(config, note, { guild, view });
-  if (view === 'ev') return buildSetupView(config, note, { guild, view, docStatus: getDocStatus(config.guildId) });
+  if (view === 'ev') return buildSetupView(config, note, { guild, view, docStatus: getDocStatus(config.guildId), watchOn: require('../client').messageContentEnabled() }); // (lazy: client.js loads this module)
   if (view === 'gate') return buildSetupView(config, note, { guild, view, health: gateHealth(config, guild) });
   if (view === 'voice') return buildSetupView(config, note, { guild, view, voiceStatus: voiceHang.statusLine(guild, config) });
   if (view === 'mb') return buildSetupView(config, note, { guild, view, mailReady: mailboxReady(), mailFingerprint: mailKeyFingerprint() });
@@ -202,6 +202,11 @@ async function handle(interaction, parts) {
       view = 'ev';
       config = await updateConfig(interaction.guildId, { eventChannelId: values[0] || null });
       logEvent('setup', 'channel_set', { ...ixCtx(interaction), select: 'evchan', set: Boolean(values[0]) });
+      break;
+    case 'evwatch':
+      view = 'ev';
+      config = await updateConfig(interaction.guildId, { eventWatchChannelId: values[0] || null });
+      logEvent('setup', 'channel_set', { ...ixCtx(interaction), select: 'evwatch', set: Boolean(values[0]) });
       break;
     case 'evadmin':
       view = 'ev';

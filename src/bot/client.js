@@ -1,5 +1,6 @@
 const { Client, Events, GatewayIntentBits } = require('discord.js');
 const voiceHang = require('./voiceHang');
+const eventWatch = require('./eventWatch');
 const { routeInteraction } = require('./interactions/router');
 const scheduler = require('../jobs/scheduler');
 const { invalidateClassStyles } = require('./classStyle');
@@ -78,6 +79,10 @@ async function onUserUpdate(oldUser, newUser) {
 }
 
 let client = null;
+// Message Content (privileged) is only needed to read the posts of the watched event channel. A bot whose owner has not enabled it in the Developer
+// Portal logs in without it (the rest of the bot works; /setup → 🎉 Sự kiện says the watch is off): false after such a fallback.
+let messageContentOn = false;
+const messageContentEnabled = () => messageContentOn;
 
 // Authentication failed / invalid shard / invalid or disallowed intents: reconnecting can never succeed.
 const UNRECOVERABLE_CLOSE_CODES = [4004, 4010, 4011, 4012, 4013, 4014];
@@ -113,9 +118,11 @@ function getClient() {
   return client;
 }
 
-async function startBot(token) {
+async function startBot(token, { messageContent = true } = {}) {
+  const intents = [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers, GatewayIntentBits.GuildExpressions, GatewayIntentBits.GuildVoiceStates]; // GuildExpressions: emoji updates; GuildVoiceStates: 🎧 Treo voice
+  if (messageContent) intents.push(GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent); // the watched event channel (eventWatch)
   client = new Client({
-    intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers, GatewayIntentBits.GuildExpressions, GatewayIntentBits.GuildVoiceStates], // GuildExpressions: emoji updates; GuildVoiceStates: 🎧 Treo voice
+    intents,
     allowedMentions: { parse: ['users', 'roles'] }, // never @everyone/@here
   });
   client.on(Events.InteractionCreate, routeInteraction);
@@ -136,6 +143,7 @@ async function startBot(token) {
   client.on(Events.GuildMemberRemove, onGateMemberRemove); // gate: a pending request of someone who left is cancelled
   client.on(Events.GuildMemberRemove, leaverRegs.onMemberLeave); // out of the open / locked war lists
   client.on(Events.GuildCreate, warmMembers);
+  if (messageContent) client.on(Events.MessageCreate, eventWatch.onMessageCreate); // a manager's post in the watched channel opens an event
   client.on(Events.VoiceStateUpdate, voiceHang.onVoiceStateUpdate); // 🎧 Treo voice: back to the chosen channel when moved / kicked
   client.on(Events.ShardReady, () => voiceHang.syncAll(client).catch(() => {})); // a new gateway session drops the voice state
   client.on(Events.Error, (err) => {
@@ -150,6 +158,7 @@ async function startBot(token) {
   });
   // discord.js may report an unrecoverable close (e.g. 4014) through this event instead of rejecting login().
   client.on(Events.ShardDisconnect, (event) => {
+    if (event && event.code === 4014 && messageContent) return; // login() rejects too: startBot retries without Message Content
     if (event && UNRECOVERABLE_CLOSE_CODES.includes(event.code)) {
       console.error(describeLoginError({ code: event.code, message: `gateway closed with code ${event.code}` }));
       logEvent('boot', 'fatal', { stage: 'gateway_close', code: event.code });
@@ -160,8 +169,14 @@ async function startBot(token) {
     await client.login(token);
   } catch (err) {
     await client.destroy().catch(() => {}); // a retry builds a fresh client; do not leave this one half-connected
+    if (messageContent && isDisallowedIntentsError(err)) {
+      console.warn('[bot] Message Content Intent is not enabled: logging in without it (the event channel watch is off).');
+      logEvent('boot', 'no_message_content', { lvl: 'warn' });
+      return startBot(token, { messageContent: false });
+    }
     throw err;
   }
+  messageContentOn = messageContent;
   return client;
 }
 
@@ -182,4 +197,4 @@ async function startBotWithRetry(token, { start = startBot, sleep = (ms) => new 
   }
 }
 
-module.exports = { onGateMemberAdd, onGateMemberRemove, onMemberUpdate, onUserUpdate, warmMembers, warmAllGuilds, warmAndRedraw, startBot, startBotWithRetry, getClient, isDisallowedIntentsError, isUnrecoverableLoginError, describeLoginError, RETRY_DELAYS_MS };
+module.exports = { messageContentEnabled, onGateMemberAdd, onGateMemberRemove, onMemberUpdate, onUserUpdate, warmMembers, warmAllGuilds, warmAndRedraw, startBot, startBotWithRetry, getClient, isDisallowedIntentsError, isUnrecoverableLoginError, describeLoginError, RETRY_DELAYS_MS };

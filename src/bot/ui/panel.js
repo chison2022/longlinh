@@ -166,19 +166,25 @@ function buildMailSetupView(config, note, ctx = {}) {
   };
 }
 
-// The fourth /setup screen (ctx.view === 'ev'): where new event cards go, and where managers handle events (the shortfall notice and the persistent panel).
-// An unset channel falls back to the war channels, and the line says so.
+// The fourth /setup screen (ctx.view === 'ev'): the watched channel (a manager's post there becomes an event, its card answers the post) and where
+// managers handle events (the shortfall notice and the persistent panel; unset = the admin channel, and the line says so). ctx.watchOn = false: the bot
+// logged in without the Message Content intent. (The old "card channel" eventChannelId has no picker any more: only a fallback for older events.)
 function buildEventSetupView(config, note, ctx = {}) {
-  const cardId = config.eventChannelId || config.announceChannelId;
   const adminId = config.eventAdminChannelId || config.adminChannelId;
-  const chan = new ChannelSelectMenuBuilder().setCustomId('setup:evchan').setPlaceholder('Kênh thông báo sự kiện (thẻ sự kiện đăng ở đây)').setChannelTypes(ChannelType.GuildText);
-  if (config.eventChannelId) chan.setDefaultChannels(config.eventChannelId);
   const admin = new ChannelSelectMenuBuilder().setCustomId('setup:evadmin').setPlaceholder('Kênh quản lý sự kiện (bảng quản lý, tin thiếu người)').setChannelTypes(ChannelType.GuildText);
   if (config.eventAdminChannelId) admin.setDefaultChannels(config.eventAdminChannelId);
+  const watch = new ChannelSelectMenuBuilder().setCustomId('setup:evwatch').setPlaceholder('Kênh đăng bài sự kiện (bài của quản lý ở đây được mở báo danh)').setChannelTypes(ChannelType.GuildText).setMinValues(0).setMaxValues(1);
+  if (config.eventWatchChannelId) watch.setDefaultChannels(config.eventWatchChannelId);
+  const watchLine = !config.eventWatchChannelId
+    ? '⚠️ Kênh đăng bài sự kiện: _chưa chọn_ (chưa có cách tạo sự kiện mới)'
+    : ctx.watchOn === false
+      ? `⚠️ Kênh đăng bài sự kiện: <#${config.eventWatchChannelId}>. Bot chưa đọc được bài: bật **Message Content Intent** ở Discord Developer Portal → Bot rồi khởi động lại bot.`
+      : channelLine('Kênh đăng bài sự kiện', config.eventWatchChannelId, ctx.guild);
   const lines = [
     '**🎉 Sự kiện**',
-    'Thẻ sự kiện đăng ở kênh thông báo sự kiện. Quản lý tạo / sửa sự kiện bằng bảng cố định ở kênh quản lý sự kiện. Chỉ quản lý dùng được bảng.',
-    cardId ? channelLine(`Kênh thông báo sự kiện${config.eventChannelId ? '' : ' (mặc định: kênh thông báo bang chiến)'}`, cardId, ctx.guild) : '⚠️ Kênh thông báo sự kiện: _chưa chọn_ (và chưa có kênh thông báo bang chiến)',
+    '• Quản lý đăng bài sự kiện ở kênh đăng bài: bot đọc giờ trong bài và trả lời ngay dưới bài bằng thẻ báo danh. Bài không ghi giờ thì bot hiện nút ⏰ Chọn giờ.',
+    '• Bảng quản lý ở kênh quản lý sự kiện: xem, sửa, chốt, huỷ, nhắc các sự kiện đang mở.',
+    watchLine,
     adminId ? channelLine(`Kênh quản lý sự kiện${config.eventAdminChannelId ? '' : ' (mặc định: kênh admin)'}`, adminId, ctx.guild) : '⚠️ Kênh quản lý sự kiện: _chưa chọn_ (và chưa có kênh admin)',
     config.eventPanelMessageId ? '✅ Bảng quản lý đã đăng. Bấm nút bên dưới để làm mới (hoặc đăng lại nếu bị xoá).' : 'Chưa đăng bảng quản lý.',
     config.eventDocId
@@ -191,7 +197,7 @@ function buildEventSetupView(config, note, ctx = {}) {
     content: lines.join('\n'),
     allowedMentions: { parse: [] },
     components: [
-      new ActionRowBuilder().addComponents(chan),
+      new ActionRowBuilder().addComponents(watch),
       new ActionRowBuilder().addComponents(admin),
       new ActionRowBuilder().addComponents(button('setup:evpost', '📌 Đăng / làm mới bảng quản lý sự kiện', ButtonStyle.Success, !adminId), button('setup:evdoc', '📄 Google Doc'), button('setup:main', '↩ Quay lại')),
     ],

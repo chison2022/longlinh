@@ -334,26 +334,27 @@ describe('buildEventsView (manager)', () => {
   const view = (opts) => assertV2Message(buildEventsView({ events: [e1, e2], counts, ...opts }));
   const idsOf = (v2) => v2.buttons.map((b) => b.custom_id).filter(Boolean);
 
-  it('lists the events (title linked, time, status, counts) with a select and ➕ Tạo sự kiện', () => {
+  it('lists the events (title linked, time, status, counts) with a select; no ➕ Tạo sự kiện (events come from posts)', () => {
     const v2 = view();
     assert.match(v2.text, /### 📅 Quản lý sự kiện/);
     assert.match(v2.text, new RegExp(`\\[Tiệc bang\\]\\(https://discord.com/channels/${GUILD}/chan/msg-1\\)`));
     assert.match(v2.text, /🟢 Đang mở · ✅ 12 · ❓ 3 · ❌ 5/);
     assert.match(v2.text, /🔒 Đã chốt · ✅ 4\/10 · ❓ 0 · ❌ 1/);
-    assert.ok(idsOf(v2).includes('ev:new'));
+    assert.ok(!idsOf(v2).includes('ev:new'));
     const select = v2.json[0].components.find((c) => c.type === 1 && c.components[0].type === 3).components[0];
     assert.equal(select.custom_id, 'ev:pick');
     assert.deepEqual(select.options.map((o) => o.value), [EID, oid(8)]);
     assert.ok(!idsOf(v2).some((id) => id.startsWith('ev:edit')), 'nothing selected: no per-event buttons');
   });
-  it('nothing open: a hint, no select', () => {
+  it('nothing open: a hint on how events are made now, no select, no button', () => {
     const v2 = assertV2Message(buildEventsView({ events: [] }));
     assert.match(v2.text, /Chưa có sự kiện nào đang mở/);
-    assert.deepEqual(idsOf(v2), ['ev:new']);
+    assert.match(v2.text, /-# Sự kiện mới: quản lý đăng bài ở kênh đăng bài sự kiện/);
+    assert.deepEqual(idsOf(v2), []);
   });
   it('a selected open event: ✏️ 🔒 ❌ 📣 📋 and a link button', () => {
     const v2 = view({ selectedId: EID });
-    assert.deepEqual(idsOf(v2), ['ev:new', `ev:edit:${EID}`, `ev:lock:${EID}`, `ev:cancel:${EID}`, `ev:remind:${EID}`, `ev:ls:${EID}`, `ev:doc:${EID}`, `ev:maybe:${EID}`]);
+    assert.deepEqual(idsOf(v2), [`ev:edit:${EID}`, `ev:lock:${EID}`, `ev:cancel:${EID}`, `ev:remind:${EID}`, `ev:ls:${EID}`, `ev:doc:${EID}`, `ev:maybe:${EID}`]);
     const labels = v2.json[0].components.flatMap((c) => (c.type === 1 ? c.components.map((b) => b.label) : []));
     assert.ok(labels.includes('🔒 Chốt') && labels.includes('🔗 Link bài') && labels.includes('❌ Huỷ sự kiện') && labels.includes('📣 Nhắc'));
     const link = v2.json[0].components.flatMap((c) => (c.type === 1 ? c.components : [])).find((b) => b.label === '🔗 Link bài');
@@ -368,10 +369,10 @@ describe('buildEventsView (manager)', () => {
   });
   it('confirm steps replace the buttons: cancel and remind (with the number of people)', () => {
     const cancel = view({ selectedId: EID, confirm: 'cancel' });
-    assert.deepEqual(idsOf(cancel).slice(1), [`ev:cancelok:${EID}`, `ev:sel:${EID}`]);
+    assert.deepEqual(idsOf(cancel), [`ev:cancelok:${EID}`, `ev:sel:${EID}`]);
     assert.match(cancel.text, /Huỷ sự kiện \*\*Tiệc bang\*\*\?/);
     const remind = view({ selectedId: EID, confirm: 'remind' });
-    assert.deepEqual(idsOf(remind).slice(1), [`ev:remindok:${EID}`, `ev:sel:${EID}`]);
+    assert.deepEqual(idsOf(remind), [`ev:remindok:${EID}`, `ev:sel:${EID}`]);
     assert.match(remind.text, /Nhắc \*\*15\*\* người \(✅ 12 · ❓ 3\)/);
   });
   it('25 events: the select holds them all, the text lists only the first ten', () => {
@@ -732,7 +733,7 @@ describe('manager actions', () => {
       await Promise.all([click('drpost', id), click('drpost', id)]);
       assert.equal(calls.filter((c) => c[0] === 'createEvent').length, 1);
       const again = await click('drpost', id);
-      assert.match(JSON.stringify(lastEdit(again.log)), /Bản nháp đã hết hạn, bấm ➕ Tạo sự kiện lại\./);
+      assert.match(JSON.stringify(lastEdit(again.log)), /Bản xem trước đã hết hạn\. Bấm lại nút để làm lại\./);
       assert.equal(calls.filter((c) => c[0] === 'createEvent').length, 1);
     });
     it('Huỷ drops the draft and posts nothing', async () => {
@@ -740,7 +741,7 @@ describe('manager actions', () => {
       const r = await click('drcancel', id);
       assert.match(JSON.stringify(lastEdit(r.log)), /Đã huỷ bản nháp/);
       const late = await click('drpost', id);
-      assert.match(JSON.stringify(lastEdit(late.log)), /Bản nháp đã hết hạn/);
+      assert.match(JSON.stringify(lastEdit(late.log)), /Bản xem trước đã hết hạn/);
       assert.ok(!calls.some((c) => c[0] === 'createEvent'));
     });
     it('a draft expires after 15 minutes; an unknown id (a restart) says the same; the toggles on it too', async () => {
@@ -753,19 +754,19 @@ describe('manager actions', () => {
         mock.timers.tick(16 * 60 * 1000); // (the click above kept it alive 15 more minutes: 16 without any click is too long)
         for (const action of ['drtag', 'drmaybe', 'drpost']) {
           const r = await click(action, id);
-          assert.match(JSON.stringify(lastEdit(r.log)), /Bản nháp đã hết hạn, bấm ➕ Tạo sự kiện lại\./, action);
+          assert.match(JSON.stringify(lastEdit(r.log)), /Bản xem trước đã hết hạn\. Bấm lại nút để làm lại\./, action);
         }
         assert.ok(!calls.some((c) => c[0] === 'createEvent'));
       } finally {
         mock.timers.reset();
       }
       const gone = await click('drpost', 'deadbeef');
-      assert.match(JSON.stringify(lastEdit(gone.log)), /Bản nháp đã hết hạn/);
+      assert.match(JSON.stringify(lastEdit(gone.log)), /Bản xem trước đã hết hạn/);
     });
     it('a draft belongs to the admin who made it', async () => {
       const id = draftOf(await submit(form()));
       const other = await click('drpost', id, { user: { id: sid(902), username: 'o' } });
-      assert.match(JSON.stringify(lastEdit(other.log)), /Bản nháp đã hết hạn/);
+      assert.match(JSON.stringify(lastEdit(other.log)), /Bản xem trước đã hết hạn/);
       assert.ok(!calls.some((c) => c[0] === 'createEvent'));
       const mine = await click('drpost', id);
       assert.match(JSON.stringify(lastEdit(mine.log)), /Đã tạo/);
@@ -1928,7 +1929,7 @@ describe('the persistent panel buttons (ev:pnew / ev:pmanage)', () => {
     assert.deepEqual(r.log.map((l) => l[0]), ['deferReply', 'editReply']);
     const v2 = assertV2Message(lastEdit(r.log));
     assert.match(v2.text, /Quản lý sự kiện/);
-    assert.ok(v2.buttons.some((b) => b.custom_id === 'ev:new'));
+    assert.ok(!v2.buttons.some((b) => b.custom_id === 'ev:new'), 'events come from posts now');
     assert.ok(lines().some((l) => l.ev === 'manage_open' && l.src === 'panel'));
     const no = memberIx();
     await events.handle(no.i, ['ev', 'pmanage']);

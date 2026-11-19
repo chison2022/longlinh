@@ -87,43 +87,46 @@ describe('the /setup 🎉 Sự kiện sub-view', () => {
     assert.equal(on.find((c) => c.custom_id === 'setup:evview').label, '🎉 Sự kiện');
     assert.ok(!ids({ ...config, features: { events: false } }).some((c) => c.custom_id === 'setup:evview'));
   });
-  it('two channel selects + post (disabled without a resolvable channel) + back; passes the Discord limits', () => {
+  it('the watched-channel select + the management select + post (disabled without a resolvable channel) + back; passes the Discord limits', () => {
     const v = view({ ...config, adminChannelId: null });
     const { rows } = assertMessage(v);
-    assert.deepEqual(rows.map((r) => r.components.map((c) => c.custom_id)), [['setup:evchan'], ['setup:evadmin'], ['setup:evpost', 'setup:evdoc', 'setup:main']]);
+    assert.deepEqual(rows.map((r) => r.components.map((c) => c.custom_id)), [['setup:evwatch'], ['setup:evadmin'], ['setup:evpost', 'setup:evdoc', 'setup:main']]);
     assert.equal(rows[2].components[0].disabled, true, 'no event / admin channel to post the panel in');
     assert.equal(rows[2].components[0].label, '📌 Đăng / làm mới bảng quản lý sự kiện');
     assert.equal(rows[2].components[2].label, '↩ Quay lại');
     assert.deepEqual(v.allowedMentions, { parse: [] });
   });
-  it('unset channels say they fall back to the war channels; the post button works through that fallback', () => {
+  it('unset: the watched channel warns (no way to make events), the management channel falls back to the admin channel', () => {
     const v = view(config);
-    assert.match(v.content, /✅ Kênh thông báo sự kiện \(mặc định: kênh thông báo bang chiến\): <#war-chan>/);
+    assert.match(v.content, /⚠️ Kênh đăng bài sự kiện: _chưa chọn_ \(chưa có cách tạo sự kiện mới\)/);
     assert.match(v.content, /✅ Kênh quản lý sự kiện \(mặc định: kênh admin\): <#adm-chan>/);
     assert.match(v.content, /Chưa đăng bảng quản lý/);
     assert.ok(!assertMessage(v).rows[2].components[0].disabled);
     const rows = assertMessage(v).rows;
     assert.ok(!rows[0].components[0].default_values && !rows[1].components[0].default_values, 'nothing preselected while unset');
   });
-  it('chosen channels replace the fallback text and are preselected; a posted panel changes the status line', () => {
-    const v = view({ ...config, eventChannelId: 'ev-chan', eventAdminChannelId: 'ev-adm', eventPanelMessageId: 'p1' });
-    assert.match(v.content, /✅ Kênh thông báo sự kiện: <#ev-chan>/);
+  it('chosen channels are shown and preselected; a posted panel changes the status line', () => {
+    const v = view({ ...config, eventWatchChannelId: 'ev-watch', eventAdminChannelId: 'ev-adm', eventPanelMessageId: 'p1' });
+    assert.match(v.content, /✅ Kênh đăng bài sự kiện: <#ev-watch>/);
     assert.match(v.content, /✅ Kênh quản lý sự kiện: <#ev-adm>/);
     assert.ok(!/mặc định/.test(v.content));
     assert.match(v.content, /Bảng quản lý đã đăng/);
     const rows = assertMessage(v).rows;
-    assert.deepEqual(rows[0].components[0].default_values.map((d) => d.id), ['ev-chan']);
+    assert.deepEqual(rows[0].components[0].default_values.map((d) => d.id), ['ev-watch']);
     assert.deepEqual(rows[1].components[0].default_values.map((d) => d.id), ['ev-adm']);
   });
-  it('nothing resolvable: both lines warn and the post button is off', () => {
+  it('without the Message Content intent the watched channel line says how to turn it on', () => {
+    const v = view({ ...config, eventWatchChannelId: 'ev-watch' }, { watchOn: false });
+    assert.match(v.content, /⚠️ Kênh đăng bài sự kiện: <#ev-watch>\. Bot chưa đọc được bài: bật \*\*Message Content Intent\*\*/);
+  });
+  it('nothing resolvable: the management line warns and the post button is off', () => {
     const v = view({ ...config, announceChannelId: null, adminChannelId: null });
-    assert.match(v.content, /⚠️ Kênh thông báo sự kiện: _chưa chọn_/);
     assert.match(v.content, /⚠️ Kênh quản lý sự kiện: _chưa chọn_/);
     assert.equal(assertMessage(v).rows[2].components[0].disabled, true);
   });
   it('permission checks like the other views: a channel the bot cannot see / lacks rights in', () => {
     const guild = { channels: { cache: new Collection() }, members: { me: {} } };
-    assert.match(view({ ...config, eventChannelId: 'ev-chan' }, { guild }).content, /⚠️ Kênh thông báo sự kiện: <#ev-chan>\. Bot không thấy kênh này\./);
+    assert.match(view({ ...config, eventWatchChannelId: 'ev-watch' }, { guild }).content, /⚠️ Kênh đăng bài sự kiện: <#ev-watch>\. Bot không thấy kênh này\./);
     const noSend = { permissionsFor: () => ({ has: (flag) => flag !== PermissionFlagsBits.SendMessages }) };
     guild.channels.cache.set('ev-adm', noSend);
     assert.match(view({ ...config, eventAdminChannelId: 'ev-adm' }, { guild }).content, /⚠️ Kênh quản lý sự kiện: <#ev-adm>\. Bot thiếu quyền: Gửi tin nhắn/);
@@ -168,17 +171,17 @@ describe('the /setup handler for the event sub-view', () => {
     assert.deepEqual(updates, []);
   });
   it('the selects save their ids, re-render the sub-view and log setup.channel_set', async () => {
-    let log = await run('evchan', { values: ['ev-chan'] });
-    assert.deepEqual(updates, [{ eventChannelId: 'ev-chan' }]);
-    assert.match(log[0][1].content, /✅ Kênh thông báo sự kiện: <#ev-chan>/);
+    let log = await run('evwatch', { values: ['ev-watch'] });
+    assert.deepEqual(updates, [{ eventWatchChannelId: 'ev-watch' }]);
+    assert.match(log[0][1].content, /Kênh đăng bài sự kiện: <#ev-watch>/);
     log = await run('evadmin', { values: ['ev-adm'] });
     assert.deepEqual(updates.at(-1), { eventAdminChannelId: 'ev-adm' });
     assert.match(log[0][1].content, /✅ Kênh quản lý sự kiện: <#ev-adm>/);
-    log = await run('evchan', { values: [] }); // cleared: back to the fallback
-    assert.deepEqual(updates.at(-1), { eventChannelId: null });
-    assert.match(log[0][1].content, /mặc định: kênh thông báo bang chiến/);
+    log = await run('evwatch', { values: [] }); // cleared: no watch
+    assert.deepEqual(updates.at(-1), { eventWatchChannelId: null });
+    assert.match(log[0][1].content, /⚠️ Kênh đăng bài sự kiện: _chưa chọn_/);
     const picks = sink.filter((l) => l.area === 'setup' && l.ev === 'channel_set').map((l) => [l.select, l.set]);
-    assert.deepEqual(picks, [['evchan', true], ['evadmin', true], ['evchan', false]]);
+    assert.deepEqual(picks, [['evwatch', true], ['evadmin', true], ['evwatch', false]]);
   });
   it('📌 posts the panel in the management channel (event channel, else the admin channel), stores the ids, then edits it, logging each', async () => {
     let log = await run('evpost');
@@ -227,12 +230,12 @@ describe('the /setup handler for the event sub-view', () => {
 describe('buildEventPanel', () => {
   const countsOf = (events, c) => new Map(events.map((e) => [String(e._id), c]));
 
-  it('empty state: heading, "Chưa có sự kiện nào sắp tới.", both buttons, the managers-only footer', () => {
+  it('empty state: heading, "Chưa có sự kiện nào sắp tới.", only 📋 Quản lý (events come from posts now), the how-to + managers-only footer', () => {
     const v2 = assertV2Message(buildEventPanel());
     assert.match(v2.text, /### 📅 Quản lý sự kiện/);
     assert.match(v2.text, /Chưa có sự kiện nào sắp tới\./);
-    assert.match(v2.text, /-# Chỉ quản lý dùng được các nút này\./);
-    assert.deepEqual(v2.buttons.map((b) => [b.custom_id, b.label]), [['ev:pnew', '➕ Tạo sự kiện'], ['ev:pmanage', '📋 Quản lý…']]);
+    assert.match(v2.text, /-# Sự kiện mới: quản lý đăng bài ở kênh đăng bài sự kiện, bot tự mở báo danh ngay dưới bài\. Chỉ quản lý dùng được nút này\./);
+    assert.deepEqual(v2.buttons.map((b) => [b.custom_id, b.label]), [['ev:pmanage', '📋 Quản lý…']]);
     assert.ok(!v2.buttons.some((b) => b.disabled));
   });
   it('one line per event: emoji, linked title, start, status, ✅ n/max; no shortfall marker without a minimum / when reached', () => {

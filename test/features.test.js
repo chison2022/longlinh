@@ -503,7 +503,7 @@ describe('/setup ⚙️ Nâng cao sub-view', () => {
     const i = { guild: { id: G }, guildId: G, client: {}, user: { id: 'a' }, member: { roles: [], permissions: MANAGE }, memberPermissions: MANAGE, values: [], deferUpdate: async () => log.push('d'), editReply: async (o) => log.push(o), followUp: async () => {} };
     await realSetupHandle(i, ['setup', 'advview']);
     assert.ok(assertMessage(log.at(-1)).customIds.has('setup:gateview'));
-    for (const [view, marker] of [['gn', 'setup:gnchan'], ['mb', 'setup:mbchan'], ['ev', 'setup:evchan']]) {
+    for (const [view, marker] of [['gn', 'setup:gnchan'], ['mb', 'setup:mbchan'], ['ev', 'setup:evwatch']]) {
       assert.ok(assertMessage(buildSetupView(cfg(), null, { view })).customIds.has(marker), view);
     }
     assert.ok(assertMessage(buildSetupView(cfg({ features: { gate: true } }), null, { view: 'gate' })).customIds.has('setup:gatetoggle'));
@@ -726,7 +726,7 @@ describe('older /setup messages', () => {
     const i = { guild: { id: G }, guildId: G, client: { channels: { fetch: async () => ({ id: 'c-admin', guild: { id: G }, send: async () => ({ id: 'm1' }), messages: { edit: async () => {} } }) } }, user: { id: 'a' }, member: { roles: [], permissions: MANAGE }, memberPermissions: MANAGE, values: [], deferUpdate: async () => {}, editReply: async (o) => log.push(o), followUp: async () => {} };
     await realSetupHandle(i, ['setup', 'post']);
     assert.match(log.at(-1).content, /Đã đăng bảng điều khiển ở <#c-admin>/);
-    for (const [part, marker] of [['gnview', 'setup:gnchan'], ['mbview', 'setup:mbchan'], ['evview', 'setup:evchan'], ['gateview', 'setup:gatechan']]) {
+    for (const [part, marker] of [['gnview', 'setup:gnchan'], ['mbview', 'setup:mbchan'], ['evview', 'setup:evwatch'], ['gateview', 'setup:gatechan']]) {
       await realSetupHandle(i, ['setup', part]);
       assert.ok(assertMessage(log.at(-1)).customIds.has(marker), part);
     }

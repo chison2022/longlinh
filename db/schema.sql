@@ -165,6 +165,7 @@ create table guild_events (
   remind_before_minutes  int not null default 60 check (remind_before_minutes >= 0),
   channel_id             text,
   message_id             text,
+  source_message_id      text,                            -- the post in the watched channel this event was opened from (a "bump"); null = made in the bot
   status                 text not null default 'open' check (status in ('open', 'locked', 'cancelled', 'done')),
   created_by             text,
   reminded_at            timestamptz,
@@ -175,6 +176,7 @@ create table guild_events (
 );
 create index guild_events_guild_status on guild_events (guild_id, status, start_at);
 create index guild_events_due on guild_events (status, deadline_at);
+create unique index guild_events_source on guild_events (guild_id, source_message_id) where source_message_id is not null; -- one event per post
 
 create table event_replies (
   event_id      char(24) not null,

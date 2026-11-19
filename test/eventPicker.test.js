@@ -346,7 +346,7 @@ describe('✅ Tạo sự kiện', () => {
     const r = await press('pkcancel', id);
     assert.match(JSON.stringify(lastEdit(r.log)), /Đã huỷ, chưa tạo sự kiện nào\./);
     const late = await press('pkok', id);
-    assert.match(JSON.stringify(lastEdit(late.log)), /Phiên tạo sự kiện đã hết hạn, bấm ➕ Tạo sự kiện lại\./);
+    assert.match(JSON.stringify(lastEdit(late.log)), /Phiên chọn giờ đã hết hạn\. Bấm lại nút để làm lại\./);
     assert.deepEqual(calls, []);
   });
 });
@@ -436,7 +436,7 @@ describe('edit through the picker', () => {
 });
 
 describe('expired pickers', () => {
-  const EXPIRED = /Phiên tạo sự kiện đã hết hạn, bấm ➕ Tạo sự kiện lại\./;
+  const EXPIRED = /Phiên chọn giờ đã hết hạn\. Bấm lại nút để làm lại\./;
   it('an unknown id (a restart) answers clearly on every picker control', async () => {
     for (const r of [await choose('deadbeef', 'day', '2026-10-30'), await press('pkok', 'deadbeef'), await press('pkcancel', 'deadbeef').then((x) => ({ log: x.log, skip: true }))]) {
       if (r.skip) continue;

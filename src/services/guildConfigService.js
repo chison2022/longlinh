@@ -202,6 +202,7 @@ function defaultConfig(guildId) {
     eventPanelChannelId: null,
     eventPanelMessageId: null,
     eventDocId: null,
+    eventWatchChannelId: null, // posts of managers here become events (the bot answers each with a card): no fallback channel
     hangChannelId: null,
     gateEnabled: false,
     gateChannelId: null,

@@ -324,7 +324,7 @@ const EVENT_SQL = `select e.id as "_id", e.guild_id as "guildId", e.title, e.des
   e.deadline_at as "deadlineAt", e.capacity, e.min_participants as "minParticipants", e.min_notice_at as "minNoticeAt",
   e.allow_maybe as "allowMaybe", e.remind_before_minutes as "remindBeforeMinutes", e.channel_id as "channelId", e.message_id as "messageId",
   e.status, e.created_by as "createdBy", e.reminded_at as "remindedAt", e.manual_remind_at as "manualRemindAt",
-  e.created_at as "createdAt", e.updated_at as "updatedAt"
+  e.source_message_id as "sourceMessageId", e.created_at as "createdAt", e.updated_at as "updatedAt"
   from guild_events e`;
 
 // camelCase field -> column, for the fields a create / edit / transition may write.
@@ -332,7 +332,7 @@ const COLUMNS = {
   guildId: 'guild_id', title: 'title', description: 'description', category: 'category', startAt: 'start_at', endAt: 'end_at',
   deadlineAt: 'deadline_at', capacity: 'capacity', minParticipants: 'min_participants', minNoticeAt: 'min_notice_at',
   allowMaybe: 'allow_maybe', remindBeforeMinutes: 'remind_before_minutes', channelId: 'channel_id', messageId: 'message_id',
-  status: 'status', createdBy: 'created_by', remindedAt: 'reminded_at', manualRemindAt: 'manual_remind_at',
+  status: 'status', createdBy: 'created_by', remindedAt: 'reminded_at', manualRemindAt: 'manual_remind_at', sourceMessageId: 'source_message_id',
 };
 const res = (n) => ({ matchedCount: n, modifiedCount: n, acknowledged: true });
 const fieldsOf = (data) => Object.entries(data).filter(([k, v]) => COLUMNS[k] && v !== undefined);
@@ -349,6 +349,11 @@ async function createEvent(data) {
   const params = [id, ...fields.map(([, v]) => v)];
   await db.q(`insert into guild_events (${cols.join(', ')}) values (${params.map((_, i) => `$${i + 1}`).join(', ')})`, params);
   return getEvent(id);
+}
+
+// The event opened from the post `messageId` (a bump), or null.
+function eventBySource(guildId, messageId) {
+  return db.one(`${EVENT_SQL} where e.guild_id = $1 and e.source_message_id = $2`, [String(guildId), String(messageId)]);
 }
 
 async function deleteEvent(eventId) {
@@ -571,6 +576,7 @@ module.exports = {
   getEvent,
   createEvent,
   deleteEvent,
+  eventBySource,
   setMessage,
   clearMessage,
   listManage,
