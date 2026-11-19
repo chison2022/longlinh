@@ -77,7 +77,7 @@ async function runOnce(client, guildId, note = {}) {
 
     const info = await api.getSpreadsheet(config.sheetId);
     const tabs = feed.buildSheet(
-      { config, infos, roster: found ? found.roster.members : [], rosterAt: found ? rosterDay(found.roster) : null, match: found ? found.match : null, dbMembers, departed, week, history, matrix, attendance, events },
+      { config, infos, roster: found ? found.roster.members : [], rosterAt: found ? rosterDay(found.roster) : null, rosterImportedAt: found ? found.roster.importedAt : null, match: found ? found.match : null, dbMembers, departed, week, history, matrix, attendance, events },
       { sep: formulaSeparator(info.locale) }
     );
     const out = {};

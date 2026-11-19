@@ -30,7 +30,7 @@ const COL = Object.fromEntries(MEMBER_HEADER.map((h, i) => [h, i + 1]));
 const LAST_COL = columnLetter(MEMBER_HEADER.length);
 const WEEK_HEADER = ['Tên game', 'Tên Discord', 'Phái', 'Báo danh', 'Phái lúc báo danh', 'Vai trò', 'Lúc báo danh', 'Discord ID'];
 const EVENT_HEADER = ['Sự kiện', 'Ngày', 'Trạng thái sự kiện', 'Tên game', 'Tên Discord', 'Phái', 'Trả lời', 'Discord ID'];
-const HISTORY_FIXED = ['Tên game', 'Tên Discord', 'Phái', 'Trạng thái']; // then one column per war, 'Số lần báo đi', 'Discord ID'
+const HISTORY_FIXED = ['Tên game', 'Tên Discord', 'Phái', 'Trạng thái']; // then one column per war, 'Số trận đi', 'Discord ID'
 
 const STATUS = { in: 'Đang ở bang', fresh: 'Mới vào', back: 'Quay lại', discordOnly: 'Chỉ có Discord', noGame: 'Chưa có tên game' };
 const BACK_DAYS = 30; // 'Quay lại' for this many days after the import that listed the character again
@@ -41,8 +41,9 @@ const WEEK_STATE = { join: '✅ Đi', absent: '❌ Vắng', none: '⏳ Chưa bá
 // a past war. With the war's result screen imported (attendance): went (registered or not), registered but did not come; without it
 // the registration alone tells. notYet = joined the guild after that war.
 const WAR_STATE = { join: '✅ Đi', none: '⏳ Không đi', absent: '❌ Vắng', noShow: '⚠️ Đăng ký nhưng không tham gia', notYet: '🆕 Chưa vào bang' };
-// the same states in the BaoDanh matrix (one letter per war): V = went, X = said no or did not come, blank = no answer / not in the guild yet
-const MATRIX_STATE = { join: 'V', none: '', absent: 'X', noShow: 'X', notYet: '' };
+// the same states in the BaoDanh matrix (one mark per war): V = went, X = said no, ! = registered but did not come, – = not in the guild yet,
+// blank = no answer
+const MATRIX_STATE = { join: 'V', none: '', absent: 'X', noShow: '!', notYet: '–' };
 const MATRIX_FIXED = ['STT', 'Tên game', 'Phái']; // then one column per war (dd/mm), 'Số trận đi'
 const EVENT_STATUS = { open: 'Đang mở', locked: 'Đã chốt', cancelled: 'Đã huỷ', done: 'Đã kết thúc' };
 const EVENT_REPLY = { yes: '✅ Tham gia', maybe: '❓ Có thể', no: '❌ Không' };
@@ -65,6 +66,9 @@ const dayMonth = (d) => {
   const p = toLocalParts(new Date(d));
   return `${pad(p.day)}/${pad(p.month + 1)}`;
 };
+// The cells of this row from column `from` to `to`. One column is written "E{r}", not "E{r}:E{r}": Sheets stores the latter as "E2",
+// which then never matches what the bot wrote.
+const span = (from, to) => (from === to ? `${from}{r}` : `${from}{r}:${to}{r}`);
 const roleOf = (m) => (m && normalizeRole(m.missionPref) !== 'any' ? plainRoleName(m.missionPref) : '');
 
 // 00:00 local time on the 1st of the current month (the history tab keeps the wars from then on).
@@ -91,6 +95,7 @@ const eventKey = (get) => `${get('Sự kiện') || ''}|${get('Ngày') || ''}|${g
 //   infos       the guild's Discord members (rosterService.memberInfo, the complete list)
 //   roster      characters of the latest import (still in the guild), [] without one
 //   rosterAt    when that roster was taken (the video date; days in the guild count back from it), or null
+//   rosterImportedAt  when it was imported (gives the hour of "Online lần cuối" when it is the same day), or null
 //   match       gameRosterService.matchDiscord() of them (null without a roster)
 //   dbMembers   linkService.loadMembers() rows (mission wish, Tuyến Khiên)
 //   departed    { ids: Set of Discord ids linked to characters that left, keys: Set of their name keys }
@@ -102,7 +107,7 @@ const eventKey = (get) => `${get('Sự kiện') || ''}|${get('Ngày') || ''}|${g
 // `sep` = formula separator of the spreadsheet (the conditional format rules are written in its locale).
 // -> [{ title, header, rows, keyOf, manual?, frozenColumns, formats }]
 function buildSheet(data, { sep = ',' } = {}) {
-  const { config = {}, infos = [], roster = [], rosterAt = null, match = null, dbMembers = [], departed = { ids: new Set(), keys: new Set() }, week = null, history = [], matrix = [], attendance = null, events = null } = data;
+  const { config = {}, infos = [], roster = [], rosterAt = null, rosterImportedAt = null, match = null, dbMembers = [], departed = { ids: new Set(), keys: new Set() }, week = null, history = [], matrix = [], attendance = null, events = null } = data;
   const canon = makeCanon(config.classes || []);
   const classText = (c) => (c ? plainClass(canon(c)) : UNKNOWN_CLASS);
   const infoById = new Map(infos.map((i) => [i.id, i]));
@@ -123,11 +128,14 @@ function buildSheet(data, { sep = ',' } = {}) {
   // ---- ThanhVien ----
   // The game's "7 giờ trước" and "23 ngày" are only true when the list was read, and the tab is not rewritten every day: dates instead.
   const at = rosterAt ? new Date(rosterAt) : null;
+  // the hour of the list: the import time when it is the same day as the list (the file-name day is only a date)
+  const sameDay = at && rosterImportedAt && day(rosterImportedAt) === day(at);
+  const seenAt = sameDay ? new Date(rosterImportedAt) : at;
   const lastSeenText = (status) => {
-    const seen = at && lastSeen(status, at);
+    const seen = seenAt && lastSeen(status, seenAt);
     if (!seen) return status || '';
     const p = toLocalParts(seen.date);
-    return seen.withTime ? `${day(seen.date)} ${pad(p.hour)}:${pad(p.minute)}` : day(seen.date);
+    return seen.withTime && sameDay ? `${day(seen.date)} ${pad(p.hour)}:${pad(p.minute)}` : day(seen.date);
   };
   // the game counts the join day as day 1
   const joinedText = (g) => (at && Number.isFinite(Number(g.daysInGuild)) ? day(new Date(at.getTime() - Math.max(Number(g.daysInGuild) - 1, 0) * DAY_MS)) : '');
@@ -189,7 +197,7 @@ function buildSheet(data, { sep = ',' } = {}) {
 
   // ---- BangChien_LichSu ----
   const wars = history.map((h) => ({ war: h.war, label: warLabel(h.war), regs: new Map((h.regs || []).map((r) => [r.discordId, r])) }));
-  const historyHeader = [...HISTORY_FIXED, ...wars.map((w) => w.label), 'Số lần báo đi', 'Discord ID'];
+  const historyHeader = [...HISTORY_FIXED, ...wars.map((w) => w.label), 'Số trận đi', 'Discord ID'];
   const screened = new Set(((attendance && attendance.wars) || []).map((w) => String(w.eventId)));
   const seen = (attendance && attendance.people) || new Map();
   // what one person did in one war -> a key of WAR_STATE / MATRIX_STATE
@@ -207,7 +215,7 @@ function buildSheet(data, { sep = ',' } = {}) {
   const joinedOf = (g) => (rosterAt && Number.isFinite(Number(g.daysInGuild)) ? new Date(new Date(rosterAt).getTime() - (Number(g.daysInGuild) + 1) * DAY_MS) : null);
   const firstWar = columnLetter(HISTORY_FIXED.length + 1);
   const lastWar = columnLetter(HISTORY_FIXED.length + wars.length);
-  const count = wars.length ? fx(`=COUNTIF(${firstWar}{r}:${lastWar}{r},"✅*")`) : 0;
+  const count = wars.length ? fx(`=COUNTIF(${span(firstWar, lastWar)},"✅*")`) : 0;
   const historyRows = chars.map((g) => {
     const link = links.get(g.name);
     return [g.name, lookup('Tên Discord'), lookup('Phái'), lookup('Trạng thái'), ...wars.map((w) => mark(w, link && link.id, joinedOf(g))), count, link ? link.id : ''];
@@ -220,7 +228,7 @@ function buildSheet(data, { sep = ',' } = {}) {
   const matrixHeader = [...MATRIX_FIXED, ...matrixWars.map((w) => w.label), 'Số trận đi'];
   const firstCell = columnLetter(MATRIX_FIXED.length + 1);
   const lastCell = columnLetter(MATRIX_FIXED.length + matrixWars.length);
-  const went = matrixWars.length ? fx(`=COUNTIF(${firstCell}{r}:${lastCell}{r},"V")`) : 0;
+  const went = matrixWars.length ? fx(`=COUNTIF(${span(firstCell, lastCell)},"V")`) : 0;
   const matrixRows = chars.map((g, i) => {
     const link = links.get(g.name);
     return [i + 1, g.name, g.className ? plainClass(g.className) : '', ...matrixWars.map((w) => MATRIX_STATE[stateOf(w, link && link.id, joinedOf(g))]), went];
@@ -230,7 +238,7 @@ function buildSheet(data, { sep = ',' } = {}) {
   let eventRows = null;
   if (events) {
     eventRows = [];
-    for (const { event, replies } of events) {
+    for (const { event, replies } of events.filter((e) => e.event.status !== 'cancelled')) { // a cancelled event is noise here
       const head = [event.title, day(event.startAt), EVENT_STATUS[event.status] || event.status];
       const list = (replies || []).filter((r) => shown(r.discordId));
       if (!list.length) eventRows.push([...head, '', '', '', '(chưa ai trả lời)', '']);
@@ -295,7 +303,7 @@ function buildSheet(data, { sep = ',' } = {}) {
       formats: (sheetId) => {
         const cells = cols(sheetId, MATRIX_FIXED.length, MATRIX_FIXED.length + MATRIX_WARS);
         const is = (text) => ({ type: 'TEXT_EQ', values: [{ userEnteredValue: text }] });
-        return [rule(0, [cells], is('V'), { backgroundColor: GREEN }), rule(1, [cells], is('X'), { backgroundColor: RED })];
+        return [rule(0, [cells], is('V'), { backgroundColor: GREEN }), rule(1, [cells], is('X'), { backgroundColor: RED }), rule(2, [cells], is('!'), { backgroundColor: color(1, 0.85, 0.6) })];
       },
     },
     ...(eventRows
