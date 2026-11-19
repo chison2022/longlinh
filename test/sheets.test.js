@@ -397,7 +397,7 @@ describe('feed.buildSheet', () => {
     const regs = [sid(1), sid(2), sid(3), sid(4)].map((discordId, i) => ({ discordId, status: i === 1 ? 'absent' : 'join', className: 'Tố Vấn', createdAt: vn(2026, 10, 21, 9) }));
     const tn = tab(buildSheet(data({ week: { war: war(1, 24), regs } })), feed.WEEK_TAB);
     assert.deepEqual(tn.rows.map((r) => [r[0], r[3], r[7]]), [['Người Mới', '⏳ Chưa báo', ''], ['An Game', '✅ Đi', sid(1)], ['', '❌ Vắng', sid(2)]]);
-    assert.deepEqual(tn.rows[1][1], fx('=IFERROR(VLOOKUP($A{r},ThanhVien!$A:$P,7,FALSE),"")'));
+    assert.deepEqual(tn.rows[1][1], fx('=IFERROR(VLOOKUP($A{r},ThanhVien!$A:$Q,7,FALSE),"")'));
     assert.equal(tn.rows[2][1], 'Bình');
   });
 
@@ -412,8 +412,8 @@ describe('feed.buildSheet', () => {
     const ls = tab(buildSheet(data({ history, attendance })), feed.HISTORY_TAB);
     assert.deepEqual(ls.header, [...feed.HISTORY_FIXED, 'T7 03/10', 'T7 10/10', 'Số lần báo đi', 'Discord ID']);
     assert.deepEqual(ls.rows.map((r) => [r[0], r[3], r[4], r[5]]), [
-      ['Người Mới', fx('=IFERROR(VLOOKUP($A{r},ThanhVien!$A:$P,6,FALSE),"")'), '🆕 Chưa vào bang', '🆕 Chưa vào bang'],
-      ['An Game', fx('=IFERROR(VLOOKUP($A{r},ThanhVien!$A:$P,6,FALSE),"")'), '⚠️ Đăng ký nhưng không tham gia', '✅ Đi'],
+      ['Người Mới', fx('=IFERROR(VLOOKUP($A{r},ThanhVien!$A:$Q,6,FALSE),"")'), '🆕 Chưa vào bang', '🆕 Chưa vào bang'],
+      ['An Game', fx('=IFERROR(VLOOKUP($A{r},ThanhVien!$A:$Q,6,FALSE),"")'), '⚠️ Đăng ký nhưng không tham gia', '✅ Đi'],
       ['', 'Chưa có tên game', '⏳ Không đi', '❌ Vắng'],
     ]);
     assert.deepEqual(ls.rows[1][6], fx('=COUNTIF(E{r}:F{r},"✅*")'));
@@ -451,7 +451,7 @@ describe('feed.buildSheet', () => {
     ];
     const sk = tab(buildSheet(data({ events })), feed.EVENT_TAB);
     assert.deepEqual(sk.rows, [
-      ['Tiệc', '25/10/2026', 'Đang mở', 'An Game', 'An Discord', fx('=IFERROR(VLOOKUP($D{r},ThanhVien!$A:$P,2,FALSE),"")'), '✅ Tham gia', sid(1)],
+      ['Tiệc', '25/10/2026', 'Đang mở', 'An Game', 'An Discord', fx('=IFERROR(VLOOKUP($D{r},ThanhVien!$A:$Q,2,FALSE),"")'), '✅ Tham gia', sid(1)],
       ['Tiệc', '25/10/2026', 'Đang mở', '', 'Bình', '', '❌ Không', sid(2)],
       ['Trống', '25/10/2026', 'Đang mở', '', '', '', '(chưa ai trả lời)', ''],
     ]);
@@ -477,9 +477,30 @@ describe('sheetSync.syncNow', () => {
     assert.equal(typeof tv[1][7], 'string');
     assert.deepEqual(fake.sheets.get('BangChien_TuanNay').rows.slice(1).map((r) => r[3]), ['✅ Đi', '✅ Đi']);
   });
+  it('ThanhVien: "Online lần cuối" is a date and "Vào bang từ" (appended last) the join date, both from the roster time', async () => {
+    assert.equal(feed.MEMBER_HEADER.at(-1), 'Vào bang từ');
+    assert.equal(feed.MEMBER_HEADER.indexOf('Online lần cuối'), 4, 'the column keeps its place');
+    const fake = createFakeSheets();
+    gateway.setClient(fake);
+    rosterDoc = { importedAt: vn(2026, 11, 18, 19, 52), source: 'x.xlsx', members: [
+      { name: 'An', rank: 'Bang Chúng', className: 'Tố Vấn', daysInGuild: 23, status: '7 giờ trước' },
+      { name: 'Bảo', rank: 'Bang Chúng', className: 'Tố Vấn', daysInGuild: 1, status: '2 ngày trước' },
+      { name: 'Chi', rank: 'Bang Chúng', className: 'Tố Vấn', daysInGuild: 5, status: 'Offline' },
+    ] };
+    await sheetSync.syncNow(clientOf(people()), GUILD);
+    const tv = fake.sheets.get('ThanhVien').rows;
+    const row = (name) => tv.find((r) => r[0] === name);
+    const seen = feed.MEMBER_HEADER.indexOf('Online lần cuối');
+    const joined = feed.MEMBER_HEADER.indexOf('Vào bang từ');
+    assert.equal(row('An')[seen], '18/11/2026 12:52');
+    assert.equal(row('Bảo')[seen], '16/11/2026', 'a day-precise text has no hour');
+    assert.equal(row('Chi')[seen], 'Offline', 'an unknown text stays as the game wrote it');
+    assert.equal(row('An')[joined], '27/10/2026', 'day 23 on 18/11: the join day is day 1');
+    assert.equal(row('Bảo')[joined], '18/11/2026');
+  });
   it('ThanhVien: the bot column "ID game" is appended last and the ID is written as a text string (leading zeros, 20 digits)', async () => {
-    assert.equal(feed.MEMBER_HEADER.at(-1), 'ID game');
-    assert.equal(feed.MEMBER_HEADER.indexOf('Ngày quay lại'), feed.MEMBER_HEADER.length - 2, 'appended: earlier columns keep their place');
+    assert.equal(feed.MEMBER_HEADER.at(-2), 'ID game');
+    assert.equal(feed.MEMBER_HEADER.indexOf('Ngày quay lại'), feed.MEMBER_HEADER.length - 3, 'appended: earlier columns keep their place');
     const fake = createFakeSheets();
     gateway.setClient(fake);
     const uid = '00123456789012345678';

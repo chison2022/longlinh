@@ -9,6 +9,7 @@ const { plainRoleName, normalizeRole } = require('../missions');
 const { isStranger } = require('../rosterService');
 const { toLocalParts, fromLocal, formatLocalDateTime } = require('../../utils/time');
 const { columnLetter, fx } = require('./managedTab');
+const { lastSeen } = require('../rosterWorkbook');
 
 const MEMBER_TAB = 'ThanhVien';
 const WEEK_TAB = 'BangChien_TuanNay';
@@ -23,7 +24,7 @@ const OLD_TABS = ['LongLinh_DangKy', 'LongLinh_GameRoster', 'LongLinh_DanhBa', '
 const tabsText = () => `${MEMBER_TAB}, ${WEEK_TAB}, ${HISTORY_TAB}, ${MATRIX_TAB}; khi bang có sự kiện thì thêm ${EVENT_TAB}`;
 
 // Columns are only ever APPENDED: the lookups below (and the managers' own formulas) count them.
-const MEMBER_HEADER = ['Tên game', 'Phái', 'Chức vụ', 'Ngày trong bang', 'Online lần cuối', 'Trạng thái', 'Tên Discord', 'Discord ID', 'Liên kết', 'Trong server', 'Vai trò', 'Tuyến Khiên', 'Ghi chú', 'Tên cũ', 'Ngày quay lại', 'ID game'];
+const MEMBER_HEADER = ['Tên game', 'Phái', 'Chức vụ', 'Ngày trong bang', 'Online lần cuối', 'Trạng thái', 'Tên Discord', 'Discord ID', 'Liên kết', 'Trong server', 'Vai trò', 'Tuyến Khiên', 'Ghi chú', 'Tên cũ', 'Ngày quay lại', 'ID game', 'Vào bang từ'];
 const MEMBER_MANUAL = ['Ghi chú']; // the managers' column: the bot never writes it
 const COL = Object.fromEntries(MEMBER_HEADER.map((h, i) => [h, i + 1]));
 const LAST_COL = columnLetter(MEMBER_HEADER.length);
@@ -120,6 +121,16 @@ function buildSheet(data, { sep = ',' } = {}) {
   };
 
   // ---- ThanhVien ----
+  // The game's "7 giờ trước" and "23 ngày" are only true when the list was read, and the tab is not rewritten every day: dates instead.
+  const at = rosterAt ? new Date(rosterAt) : null;
+  const lastSeenText = (status) => {
+    const seen = at && lastSeen(status, at);
+    if (!seen) return status || '';
+    const p = toLocalParts(seen.date);
+    return seen.withTime ? `${day(seen.date)} ${pad(p.hour)}:${pad(p.minute)}` : day(seen.date);
+  };
+  // the game counts the join day as day 1
+  const joinedText = (g) => (at && Number.isFinite(Number(g.daysInGuild)) ? day(new Date(at.getTime() - Math.max(Number(g.daysInGuild) - 1, 0) * DAY_MS)) : '');
   const links = new Map(); // character name -> { id, source, present }
   for (const m of (match && match.matched) || []) links.set(m.game.name, { id: m.discordId, source: m.manual ? m.source || 'admin' : 'auto' });
   for (const u of (match && match.uncached) || []) if (!links.has(u.gameName)) links.set(u.gameName, { id: u.discordId, source: 'admin' });
@@ -140,7 +151,7 @@ function buildSheet(data, { sep = ',' } = {}) {
       g.className ? plainClass(g.className) : '',
       g.rank || '',
       Number(g.daysInGuild) || 0,
-      g.status || '',
+      lastSeenText(g.status),
       statusOf(g),
       info ? info.name : (db && db.displayName) || '',
       link ? link.id : '',
@@ -152,12 +163,13 @@ function buildSheet(data, { sep = ',' } = {}) {
       (g.oldNames || []).join(', '),
       g.returnedAt ? day(g.returnedAt) : '',
       g.gameUid || '', // a string: RAW keeps it text (leading zeros, no 1.2E+10)
+      joinedText(g),
     ];
   });
   const discordOnly = infos.filter((i) => !linkedIds.has(i.id) && counted(i.id)).sort((a, b) => a.name.localeCompare(b.name, 'vi'));
   for (const i of discordOnly) {
     const db = dbById.get(i.id);
-    memberRows.push(['', '', '', '', '', STATUS.discordOnly, i.name, i.id, 'Chưa liên kết', 'Có', roleOf(db), db && db.tuyenKhien ? 'Có' : '', '', '', '', '']);
+    memberRows.push(['', '', '', '', '', STATUS.discordOnly, i.name, i.id, 'Chưa liên kết', 'Có', roleOf(db), db && db.tuyenKhien ? 'Có' : '', '', '', '', '', '']);
   }
   const shown = (id) => linkedIds.has(id) || counted(id); // may a registration / answer of this person be written
 
