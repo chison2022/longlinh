@@ -85,14 +85,15 @@ async function buildGameRosterXlsx(members, { classes = [], styles = {}, importe
   ];
   ws.getRow(1).height = 36;
   ws.getRow(1).eachCell((cell, c) => style(cell, c >= RAW_FROM ? { fill: RAW_HEAD_FILL, bold: true, border: box(), color: MUTED } : { fill: HEAD_FILL, bold: true, border: box() }));
-  ws.getCell('E1').note = 'Ngày cập nhật danh sách trừ đi số ngày trong bang.';
+  ws.getCell('E1').note = 'Tính từ số ngày trong bang lúc cập nhật danh sách (game tính ngày vào là ngày 1).';
   ws.getCell('F1').note = 'Tính từ cột "Trạng thái" và lúc cập nhật danh sách. Có giờ khi game ghi theo phút/giờ, chỉ có ngày khi game ghi theo ngày.';
   ws.getCell('G1').note = '✘ Chưa = chưa ghép được với ai trong Discord: dùng 🔗 Ghép tên trong bot.';
 
   const order = [...classes, ...[...new Set(members.map((m) => m.className))].filter((c) => !classes.includes(c))];
   members.forEach((m, i) => {
     const days = Number(m.daysInGuild) || 0;
-    const joined = atValid ? vnCell(new Date(at.getTime() - days * DAY)) : null;
+    // the game counts the join day as day 1 (people missing from the 17/11 list showed "1 ngày" on 18/11)
+    const joined = atValid ? vnCell(new Date(at.getTime() - Math.max(days - 1, 0) * DAY)) : null;
     const seen = atValid ? lastSeen(m.status, at) : null;
     const row = ws.addRow([
       i + 1,

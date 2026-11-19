@@ -256,7 +256,8 @@ describe('buildGameRosterXlsx: dates instead of stale counts', () => {
     await wb.xlsx.load(buf);
     const ws = wb.getWorksheet('Thành viên');
     const iso = (r, c) => ws.getRow(r).getCell(c).value.toISOString().slice(0, 16);
-    assert.equal(iso(2, 5).slice(0, 10), '2026-10-26', 'joined 23 days before 18/11');
+    assert.equal(iso(2, 5).slice(0, 10), '2026-10-27', 'day 23 on 18/11: the join day is day 1');
+    assert.equal(iso(3, 5).slice(0, 10), '2026-11-18', '"1 ngày" = joined that day');
     assert.equal(iso(2, 6), '2026-11-18T12:52', '19:52 - 7h = 12:52 Vietnam time');
     assert.equal(ws.getRow(2).getCell(6).numFmt, 'dd/mm/yyyy hh:mm');
     assert.equal(iso(3, 6), '2026-11-18T19:52');
