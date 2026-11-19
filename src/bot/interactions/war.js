@@ -41,14 +41,12 @@ const recorded = (event, status, label) =>
 const GN_NUDGE = '🎮 Chọn nhân vật game của bạn để lead xếp đúng người.\n-# Không bắt buộc.';
 // Skipped for a member who is already matched automatically (game names), and shown at most once per war per member.
 const nudged = new Set(); // `${eventId}:${userId}`
-// A ✅ Tham gia from someone whose linked character left the guild in game is saved, with a warning (the managers decide).
-const leftWarning = (gameName) => `⚠️ **${escapeMarkdown(String(gameName || ''))}** không còn trong danh sách bang ở game. Báo danh vẫn được lưu.\n-# Đã quay lại bang? Báo quản lý cập nhật danh sách.`;
+// Someone whose linked character left the guild in game cannot register at all (the user's choice, 2026-11-19): nothing is saved.
+const leftGuild = (member) => Boolean(member && member.gameLeftAt);
+const leftRefusal = (gameName) =>
+  `🚪 **${escapeMarkdown(String(gameName || ''))}** không còn trong danh sách bang ở game nên không báo danh bang chiến được.\n-# Đã quay lại bang hoặc đổi tên? Báo quản lý cập nhật danh sách.`;
 
 async function withGameNameNudge(interaction, eventId, reply, status, member) {
-  if (status === 'join' && member && member.gameLeftAt) {
-    logEvent('war', 'left_join', { ...ixCtx(interaction), eid: eventId });
-    return `${reply}\n${leftWarning(member.gameName)}`;
-  }
   if (status !== 'join' || (member && member.gameName)) return reply;
   const key = `${eventId}:${interaction.user.id}`;
   if (nudged.has(key)) return reply;
@@ -106,6 +104,10 @@ async function onStatus(interaction, eventId, status) {
     logEvent('war', 'register', { ...ixCtx(interaction), eid: eventId, status, result: 'closed' });
     return interaction.editReply(CLOSED);
   }
+  if (leftGuild(member)) {
+    logEvent('war', 'register', { ...ixCtx(interaction), eid: eventId, status, result: 'left_guild' });
+    return interaction.editReply(leftRefusal(member.gameName));
+  }
   // Class order: the Discord role (exactly one) -> the saved class -> ask.
   const saved = member && member.className;
   const roleClass = roleClassOf(interaction, config);
@@ -160,6 +162,10 @@ async function onClass(interaction, eventId, status) {
 ${RESERVE_GONE}`, components: [] });
     }
     if (!STATUSES.includes(status)) return interaction.editReply({ content: NOT_FOUND, components: [] });
+    if (leftGuild(memberDoc)) {
+      logEvent('war', 'register', { ...ixCtx(interaction), eid: eventId, status, classFrom: 'asked', result: 'left_guild' });
+      return interaction.editReply({ content: `${note}Đã lưu phái ${classLabel(interaction, config, className)}.\n${leftRefusal(memberDoc.gameName)}`, components: [] });
+    }
     const registered = await register(interaction, event, status, className);
     logEvent('war', 'register', { ...ixCtx(interaction), eid: eventId, status, classFrom: 'asked', result: registered ? 'ok' : 'closed' });
     if (!registered) {

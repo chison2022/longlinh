@@ -7,6 +7,7 @@ const departure = require('../services/departureService');
 const { getConfigOrDefault, isOn } = require('../services/guildConfigService');
 const warService = require('../services/warService');
 const { listRegistrations } = require('../services/registrationService');
+const { dropFromActiveWars } = require('./leaverRegs');
 const { ensureMembers } = require('./memberCache');
 const { memberInfo } = require('../services/rosterService');
 const { buildDepartNotice, noticeParts, MAX_MERGE } = require('./ui/departNotice');
@@ -32,6 +33,21 @@ async function stillJoined(guildId, departed) {
   } catch (err) {
     console.warn(`[departNotice] guild ${guildId}: registrations unavailable:`, err.message);
     return { war: null, ids: [] };
+  }
+}
+
+// The departed people are taken out of the open / locked wars right away (the user's choice, 2026-11-19: someone who left the guild
+// in game is never in a war list). Only `gone`: the "probably only another name" people keep their registration. -> the Discord ids
+// removed (each once). A failed write only leaves them in: the "still registered" section then lists them with its button.
+async function dropDeparted(client, guildId, gone) {
+  const ids = new Set(gone.map((d) => d.discordId));
+  if (!ids.size) return [];
+  try {
+    const wars = await dropFromActiveWars(client, guildId, (regs) => regs.map((r) => r.discordId).filter((id) => ids.has(id)), 'left_game');
+    return [...new Set(wars.flatMap((w) => w.removed))];
+  } catch (err) {
+    console.warn(`[departNotice] guild ${guildId}: registrations not removed:`, err.message);
+    return [];
   }
 }
 
@@ -99,12 +115,13 @@ async function noticeGuild(client, guildId, { guild = null, config = null } = {}
     const hints = await mergeHintsFor(guildId, departed, roster, linked, members);
     const gone = departed.filter((d) => !hints.has(d.discordId));
     const maybe = departed.filter((d) => hints.has(d.discordId)).map((d) => ({ id: d.discordId, ...hints.get(d.discordId) }));
+    const removed = await dropDeparted(client, guildId, gone);
     const { war, ids: joined } = await stillJoined(guildId, gone);
-    await channel.send(v2Create(buildDepartNotice({ rosterId, importedAt: roster.importedAt, departed: gone, joined, warTitle: war ? war.title : '', maybe })));
+    await channel.send(v2Create(buildDepartNotice({ rosterId, importedAt: roster.importedAt, departed: gone, joined, warTitle: war ? war.title : '', maybe, removed })));
     // the unlink button may touch only the people the lines really showed
-    const shown = noticeParts(gone, roster.importedAt, maybe, joined, war ? war.title : '').lines.length;
+    const shown = noticeParts(gone, roster.importedAt, maybe, joined, war ? war.title : '', removed).lines.length;
     await departure.saveNoticeIds(guildId, roster._id, gone.slice(0, shown).map((d) => d.discordId), { more: gone.length - shown, at, joined, warId: war ? war._id : null, merge: maybe.slice(0, MAX_MERGE) }); // like the lines: only the pairs really shown
-    logEvent('roster', 'depart_notice', { guild: guildId, rosterId, count, joined: joined.length, maybe: maybe.length, posted: true });
+    logEvent('roster', 'depart_notice', { guild: guildId, rosterId, count, joined: joined.length, removed: removed.length, maybe: maybe.length, posted: true });
     return { posted: true, count };
   } catch (err) {
     // after the claim a failed post is not retried (no repeated notices); the 🎮 view still shows the same list

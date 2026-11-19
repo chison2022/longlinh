@@ -100,6 +100,14 @@ describe('buildDepartNotice', () => {
     assert.ok(!allText(build(people(3))).includes('adm:depreg'));
   });
 
+  it('people the bot took out of the open wars are listed in their own section, without a button', () => {
+    const payload = buildDepartNotice({ rosterId: 'abc123', importedAt: vn(2026, 10, 8, 12), departed: people(3), removed: [sid(1), sid(3)] });
+    const text = allText(payload);
+    assert.match(text, /Đã tự gỡ khỏi bang chiến đang mở\*\* \(2\): <@100000000000000001>, <@100000000000000003>/);
+    assert.ok(!text.includes('adm:depreg'));
+    assert.ok(!allText(build(people(3))).includes('Đã tự gỡ'));
+  });
+
   it('V2 container, warning accent, no mentions allowed, the wanted texts and the two buttons', () => {
     const payload = build(people(3));
     assert.equal(payload.flags & MessageFlags.IsComponentsV2, MessageFlags.IsComponentsV2);

@@ -42,12 +42,20 @@ function joinedText(joined, warTitle) {
   return `⚠️ **Vẫn đang báo danh Tham gia**${warTitle ? ` trận ${safeName(warTitle)}` : ''} (${joined.length}): ${shown}${rest}\n-# Bấm 🗑️ Gỡ báo danh nếu họ thật sự đã rời bang.`;
 }
 
+// The "registrations removed automatically" section of `removed` ids ('' without anybody).
+function removedText(removed) {
+  if (!removed || !removed.length) return '';
+  const shown = removed.slice(0, MAX_LINES).map((id) => `<@${id}>`).join(', ');
+  const rest = removed.length > MAX_LINES ? ` … +${removed.length - MAX_LINES}` : '';
+  return `🗑️ **Đã tự gỡ khỏi bang chiến đang mở** (${removed.length}): ${shown}${rest}\n-# Người đã rời bang không báo danh được nữa. Nếu là đổi tên, ghép lại tên mới rồi họ báo danh lại.`;
+}
+
 // departed: [{ discordId, gameName, source }]; importedAt: when the roster was imported; maybe: see mergeText; joined / warTitle: see
 // joinedText. Every section shares the one text budget of the message.
 // -> { subtitle, lines, more }: `lines` = what fits (at most MAX_LINES and the text budget), `more` = how many are left out.
-function noticeParts(departed, importedAt, maybe = [], joined = [], warTitle = '') {
+function noticeParts(departed, importedAt, maybe = [], joined = [], warTitle = '', removed = []) {
   const subtitle = `Theo danh sách game cập nhật ${discordTs(new Date(importedAt), 'R')} (${departed.length + maybe.length} người).`;
-  let used = TITLE.length + subtitle.length + NOTE.length + 80 + mergeText(maybe).length + joinedText(joined, warTitle).length;
+  let used = TITLE.length + subtitle.length + NOTE.length + 80 + mergeText(maybe).length + joinedText(joined, warTitle).length + removedText(removed).length;
   const lines = [];
   for (const p of departed) {
     const line = lineOf(p);
@@ -63,8 +71,9 @@ const button = (id, label, style = ButtonStyle.Secondary) => new ButtonBuilder()
 // joined: Discord ids of `departed` who still say "join" for the current war (`warTitle`): listed apart, with a 🗑️ Gỡ báo danh button.
 // maybe: the people who probably only have another name (see mergeText): listed apart with a 🔀 select (one option per person, the
 // manager picks who really is the same person), and never among `departed`.
-function buildDepartNotice({ rosterId, importedAt, departed, joined = [], warTitle = '', maybe = [] }) {
-  const { subtitle, lines, more } = noticeParts(departed, importedAt, maybe, joined, warTitle);
+// removed: Discord ids of `departed` whose registrations the bot took out of the open wars (a text section, no button).
+function buildDepartNotice({ rosterId, importedAt, departed, joined = [], warTitle = '', maybe = [], removed = [] }) {
+  const { subtitle, lines, more } = noticeParts(departed, importedAt, maybe, joined, warTitle, removed);
   const list = more > 0 ? [...lines, `… và ${more} người nữa`] : lines;
   const container = new ContainerBuilder().setAccentColor(ORANGE).addTextDisplayComponents(textDisplay(`${TITLE}\n${subtitle}`));
   const row = new ActionRowBuilder().addComponents(button(`adm:depok:${rosterId}`, '✅ Đã xử lý', ButtonStyle.Success));
@@ -81,6 +90,7 @@ function buildDepartNotice({ rosterId, importedAt, departed, joined = [], warTit
       .addOptions(maybe.slice(0, MAX_MERGE).map((p) => ({ label: truncate(`${p.from} → ${p.name}`, 100), value: String(p.id) })));
     container.addSeparatorComponents(separator()).addTextDisplayComponents(textDisplay(mergeText(maybe))).addActionRowComponents(new ActionRowBuilder().addComponents(select));
   }
+  if (removed.length) container.addSeparatorComponents(separator()).addTextDisplayComponents(textDisplay(removedText(removed)));
   if (joined.length) {
     container.addSeparatorComponents(separator()).addTextDisplayComponents(textDisplay(joinedText(joined, warTitle)));
     row.addComponents(button(`adm:depreg:${rosterId}`, '🗑️ Gỡ báo danh', ButtonStyle.Danger));
