@@ -57,7 +57,7 @@ Bot lo phần việc lặp lại hằng tuần của ban quản lý: mở đăng
 
 ### Công cụ cho chủ bot (chạy trên máy)
 
-- `scripts/roster-video.js`: cắt khung hình từ video quay danh sách bang trong game, dựng file `.xlsx` và so với lần trước.
+- `scripts/roster-video.js`: liệt kê video chưa xử lý (ghi trong `da-xu-ly.json` ở thư mục video), cắt khung hình từ video quay danh sách bang trong game, dựng file `.xlsx` và so với lần trước.
 - `scripts/import-game-roster.js`, `scripts/import-attendance.js`: nhập danh sách bang / kết quả chuyên cần (màn hình kết quả sau trận) vào database, có chế độ `--dry` chỉ đọc.
 - `scripts/log-report.js`: tóm tắt log sự kiện của bot.
 - `scripts/mailbox-keygen.js`, `scripts/mailbox-who.js`: tạo cặp khoá hòm thư ẩn danh, tra người gửi một thư.
@@ -179,7 +179,7 @@ npm run mail:keygen       # tạo cặp khoá; chỉ khoá công khai vào confi
 | `npm run dev` | Chạy bot, tự khởi động lại khi sửa code |
 | `npm run deploy` | Đăng ký slash command |
 | `npm test` | Chạy toàn bộ kiểm thử |
-| `npm run roster:video -- latest \| frames \| build …` | Xử lý video danh sách bang → `.xlsx` |
+| `npm run roster:video -- latest \| mark \| frames \| build …` | Xử lý video danh sách bang → `.xlsx`; `mark <video> roster\|war\|skip` ghi nhận video đã xử lý |
 | `npm run roster:import -- --guild <id> --file <xlsx> [--dry]` | Nhập danh sách bang vào database |
 | `npm run attendance:import -- --guild <id> --file <txt> --date <YYYY-MM-DD> [--dry]` | Nhập chuyên cần một trận |
 | `npm run logs:report` | Tóm tắt log sự kiện |

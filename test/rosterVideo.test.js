@@ -1,5 +1,6 @@
 // scripts/roster-video.js build: a cut name typed "..." becomes "…", a row without "|" is reported instead of thrown.
-const { describe, it } = require('node:test');
+// latest / mark: which videos are still to handle, and the da-xu-ly.json ledger.
+const { describe, it, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -43,5 +44,55 @@ describe('roster-video build', () => {
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('roster-video latest / mark (the da-xu-ly.json ledger)', () => {
+  const { latest, mark, LEDGER } = require(SCRIPT);
+  let dir;
+  const touch = (name, at) => {
+    const f = path.join(dir, name);
+    fs.writeFileSync(f, 'x');
+    fs.utimesSync(f, new Date(at), new Date(at));
+  };
+  const names = () => latest(dir).candidates.map((c) => path.basename(c.file));
+
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'll-rv-'));
+    touch('old.mp4', '2026-11-01T10:00:00Z');
+    touch('thanh-vien-bang-2026-11-10.xlsx', '2026-11-10T10:00:00Z');
+    touch('war.mp4', '2026-11-12T10:00:00Z');
+    touch('roster.mp4', '2026-11-11T10:00:00Z');
+    touch('notes.txt', '2026-11-13T10:00:00Z');
+  });
+  afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+  it('without a ledger, offers the videos newer than the last roster, oldest first', () => {
+    assert.deepEqual(names(), ['roster.mp4', 'war.mp4']);
+    assert.equal(latest(dir).ledger, null);
+  });
+
+  it('a marked video is not offered again, even with no new roster file', () => {
+    mark(dir, path.join(dir, 'war.mp4'), 'war');
+    assert.deepEqual(names(), ['roster.mp4']);
+    mark(dir, 'roster.mp4', 'roster', 'D:\\nthvideo\\thanh-vien-bang-2026-11-11.xlsx');
+    assert.deepEqual(names(), []);
+    const l = JSON.parse(fs.readFileSync(path.join(dir, LEDGER), 'utf8'));
+    assert.equal(l.since, '2026-11-10T10:00:00.000Z');
+    assert.equal(l.videos['roster.mp4'].output, 'thanh-vien-bang-2026-11-11.xlsx');
+    assert.equal(l.videos['war.mp4'].kind, 'war');
+  });
+
+  it('keeps the first cut-off: a newer roster file does not hide unhandled videos', () => {
+    mark(dir, 'war.mp4', 'skip');
+    touch('thanh-vien-bang-2026-11-20.xlsx', '2026-11-20T10:00:00Z');
+    touch('new.mp4', '2026-11-21T10:00:00Z');
+    assert.deepEqual(names(), ['roster.mp4', 'new.mp4']);
+  });
+
+  it('rejects an unknown kind or a video that is not in the folder', () => {
+    assert.throws(() => mark(dir, 'war.mp4', 'gameplay'), /kind must be/);
+    assert.throws(() => mark(dir, 'missing.mp4', 'skip'), /no video/);
+    assert.equal(fs.existsSync(path.join(dir, LEDGER)), false);
   });
 });

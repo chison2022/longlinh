@@ -1,9 +1,13 @@
 // Helper for turning a screen recording of the in-game "Thành Viên" list into the roster xlsx (used by the dong-bo-video skill).
-//   node scripts/roster-video.js latest [--dir <folder>]             newest video not yet turned into a thanh-vien-bang-*.xlsx (JSON)
+//   node scripts/roster-video.js latest [--dir <folder>]             videos not handled yet, oldest first (JSON)
+//   node scripts/roster-video.js mark <video> <kind> [output] [--dir <folder>]
+//                                                                     record a video as handled: kind roster | war | skip
 //   node scripts/roster-video.js frames <video> <outDir>              cropped table frames (2 fps) + counter.jpg (the "57/60 · 14/20" bar)
 //   node scripts/roster-video.js build <rows.txt> <out.xlsx> [--prev <xlsx>]
 //                                                                     rows "STT|Tên|Chức vụ|Cấp|Phái|Lực chiến|Ngày|Trạng thái" -> xlsx + diff
 // The xlsx has the sheet "Thành viên" that scripts/import-game-roster.js (and the 🎮 Thành viên game upload) read.
+// Handled videos are listed in <dir>/da-xu-ly.json, so a war video or a gameplay clip is not offered again. Before the first
+// `mark`, a video counts as new when it is newer than the last thanh-vien-bang-*.xlsx; that cut-off is kept in the ledger as `since`.
 const fs = require('node:fs');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
@@ -21,16 +25,56 @@ function arg(name, fallback) {
 // Folding for the diff only: accents, đ, spacing and case do not make a different person.
 const fold = (s) => String(s).normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[đĐ]/g, 'd').replace(/\s+/g, ' ').trim().toLowerCase();
 
+const LEDGER = 'da-xu-ly.json';
+const KINDS = ['roster', 'war', 'skip'];
+
+function readLedger(dir) {
+  const file = path.join(dir, LEDGER);
+  if (!fs.existsSync(file)) return null;
+  const l = JSON.parse(fs.readFileSync(file, 'utf8').replace(/^﻿/, ''));
+  return { since: l.since || null, videos: l.videos || {} };
+}
+
+function lastRosterOf(files) {
+  return files.filter((f) => ROSTER_FILE.test(f.name)).sort((a, b) => b.mtime - a.mtime)[0] || null;
+}
+
+function listDir(dir) {
+  return fs.readdirSync(dir).map((name) => {
+    const st = fs.statSync(path.join(dir, name));
+    return { name, full: path.join(dir, name), mtime: st.mtime, size: st.size };
+  });
+}
+
 function latest(dir) {
-  const files = fs.readdirSync(dir).map((name) => ({ name, full: path.join(dir, name), mtime: fs.statSync(path.join(dir, name)).mtime }));
-  const rosters = files.filter((f) => ROSTER_FILE.test(f.name)).sort((a, b) => b.mtime - a.mtime);
-  const lastRoster = rosters[0] || null;
-  const videos = files.filter((f) => VIDEO_EXT.test(f.name)).sort((a, b) => b.mtime - a.mtime);
-  const fresh = videos.filter((v) => !lastRoster || v.mtime > lastRoster.mtime);
+  const files = listDir(dir);
+  const lastRoster = lastRosterOf(files);
+  const ledger = readLedger(dir);
+  const since = ledger ? (ledger.since && new Date(ledger.since)) : lastRoster && lastRoster.mtime;
+  const done = ledger ? ledger.videos : {};
+  const fresh = files
+    .filter((f) => VIDEO_EXT.test(f.name) && !done[f.name] && (!since || f.mtime > since))
+    .sort((a, b) => a.mtime - b.mtime);
   return {
     lastRoster: lastRoster && { file: lastRoster.full, at: lastRoster.mtime.toISOString() },
-    candidates: fresh.map((v) => ({ file: v.full, at: v.mtime.toISOString(), mb: Math.round(fs.statSync(v.full).size / 1048576) })),
+    ledger: ledger ? path.join(dir, LEDGER) : null,
+    candidates: fresh.map((v) => ({ file: v.full, at: v.mtime.toISOString(), mb: Math.round(v.size / 1048576) })),
   };
+}
+
+function mark(dir, video, kind, output) {
+  if (!KINDS.includes(kind)) throw new Error(`kind must be one of ${KINDS.join(', ')}`);
+  const name = path.basename(video);
+  if (!fs.existsSync(path.join(dir, name))) throw new Error(`no video ${name} in ${dir}`);
+  let ledger = readLedger(dir);
+  if (!ledger) {
+    // first mark: keep today's cut-off, so the videos older than the last roster stay handled
+    const lastRoster = lastRosterOf(listDir(dir));
+    ledger = { since: lastRoster ? lastRoster.mtime.toISOString() : null, videos: {} };
+  }
+  ledger.videos[name] = { kind, ...(output ? { output: path.basename(output) } : {}), at: new Date().toISOString() };
+  fs.writeFileSync(path.join(dir, LEDGER), `${JSON.stringify(ledger, null, 1)}\n`);
+  return { video: name, ...ledger.videos[name] };
 }
 
 function frames(video, outDir) {
@@ -136,14 +180,20 @@ async function build(txt, out, prevPath) {
 }
 
 async function main() {
-  const [cmd, a, b] = process.argv.slice(2);
-  if (cmd === 'latest') return console.log(JSON.stringify(latest(arg('dir', process.env.ROSTER_VIDEO_DIR || 'videos')), null, 1));
+  const [cmd, a, b, c] = process.argv.slice(2).filter((x, i, all) => !x.startsWith('--') && !(all[i - 1] || '').startsWith('--'));
+  const dir = arg('dir', process.env.ROSTER_VIDEO_DIR || 'videos');
+  if (cmd === 'latest') return console.log(JSON.stringify(latest(dir), null, 1));
+  if (cmd === 'mark' && a && b) return console.log(JSON.stringify(mark(dir, a, b, c)));
   if (cmd === 'frames' && a && b) return frames(a, b);
   if (cmd === 'build' && a && b) return build(a, b, arg('prev'));
-  throw new Error('usage: roster-video.js latest [--dir <dir>] | frames <video> <outDir> | build <rows.txt> <out.xlsx> [--prev <xlsx>]');
+  throw new Error('usage: roster-video.js latest [--dir <dir>] | mark <video> <roster|war|skip> [output] [--dir <dir>] | frames <video> <outDir> | build <rows.txt> <out.xlsx> [--prev <xlsx>]');
 }
 
-main().catch((err) => {
-  console.error(err.message);
-  process.exitCode = 1;
-});
+module.exports = { latest, mark, LEDGER };
+
+if (require.main === module) {
+  main().catch((err) => {
+    console.error(err.message);
+    process.exitCode = 1;
+  });
+}
